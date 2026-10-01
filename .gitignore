@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# 虚拟环境
+.venv/
+
+# 缓存与测试产物
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# 密钥：绝对不能进仓库
+.env
+
+# 本地数据与索引产物
+data/
+artifacts/
+*.db
+
+# 编辑器
+.idea/
+.vscode/
