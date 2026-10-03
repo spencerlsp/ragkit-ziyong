@@ -26,3 +26,6 @@ artifacts/
 # 编辑器
 .idea/
 .vscode/
+
+# 玩具
+scripts/async_playground.py

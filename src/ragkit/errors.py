@@ -38,11 +38,11 @@ class RagkitError(Exception):
           这样以后加参数也不会悄悄改坏已有的位置参数调用。
         - 不需要写 ``__str__``，父类的实现已经够用了。
     """
+
     def __init__(self, message: str, *, source: str | None = None) -> None:
         super().__init__(message)
         self.message = message
-        self.source = source # source 表示「是谁出的错」：文件路径、Milvus collection 名、模型名……
-
+        self.source = source  # source 表示「是谁出的错」：文件路径、Milvus collection 名、模型名……
 
 
 class ParseError(RagkitError):

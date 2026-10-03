@@ -140,7 +140,7 @@ def test_rag_result_defaults() -> None:
         answer="",
     )
 
-    assert not rr.answer and  rr.context_texts == []
+    assert not rr.answer and rr.context_texts == []
     # raise NotImplementedError("TODO: 写出这个测试的断言")
 
 

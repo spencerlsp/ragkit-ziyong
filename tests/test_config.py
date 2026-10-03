@@ -30,7 +30,7 @@ def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = Settings(_env_file=None)
     # 断言默认值
     assert settings.milvus_collection == "ragkit_chunks"
-    assert settings.top_k == 5  
+    assert settings.top_k == 5
     # raise NotImplementedError("TODO: 写出这个测试的断言")
 
 
@@ -56,7 +56,7 @@ def test_chunk_overlap_must_be_smaller(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setenv("CHUNK_SIZE", "100")
     monkeypatch.setenv("CHUNK_OVERLAP", "200")
-    with pytest.raises(ValueError): 
+    with pytest.raises(ValueError):
         Settings(_env_file=None)
     # raise NotImplementedError("TODO: 写出这个测试的断言")
 

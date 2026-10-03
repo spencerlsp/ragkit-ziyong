@@ -64,7 +64,7 @@ class Chunk(BaseModel):
     """切分后的一段文本。一个 Document 通常产生很多个 Chunk。"""
 
     # 稳定 ID：utils.stable_id(doc_id, str(index), text)
-    chunk_id: str 
+    chunk_id: str
 
     # 来自哪个文档（检索到之后要能溯源）
     doc_id: str
@@ -78,7 +78,7 @@ class Chunk(BaseModel):
     index: int = Field(ge=0)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("text") # 对单个字段做校验、预处理、值转换(在创建时便运行)
+    @field_validator("text")  # 对单个字段做校验、预处理、值转换(在创建时便运行)
     @classmethod
     def _text_must_not_be_blank(cls, value: str) -> str:
         cleaned = value.strip()
@@ -94,7 +94,7 @@ class Chunk(BaseModel):
     def char_count(self) -> int:
         return len(self.text)
 
-    
+
 class ScoredChunk(BaseModel):
     """检索结果：一个 Chunk 加上它的相关性分数。"""
 
@@ -111,15 +111,15 @@ class ScoredChunk(BaseModel):
             return text
         return text[:limit] + "..."
 
+
 class RAGResult(BaseModel):
     """一次「查询 -> 检索 -> 生成」的最终产物。"""
 
-    query: str # 用户的初始问题
-    answer: str # LLM生成的回答：只做检索时给的空字符串
-    contexts: list[ScoredChunk] = Field(default_factory=list) # 回答所依据的检索片段
-    model: str | None = None # 生成用的模型名，为方便评估时的记录
-    metadata: dict[str, Any] = Field(default_factory=dict) # 耗时、token 数等
-
+    query: str  # 用户的初始问题
+    answer: str  # LLM生成的回答：只做检索时给的空字符串
+    contexts: list[ScoredChunk] = Field(default_factory=list)  # 回答所依据的检索片段
+    model: str | None = None  # 生成用的模型名，为方便评估时的记录
+    metadata: dict[str, Any] = Field(default_factory=dict)  # 耗时、token 数等
 
     @property
     def context_texts(self) -> list[str]:

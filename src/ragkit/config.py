@@ -94,33 +94,31 @@ class Settings(BaseSettings):
     openai_embedding_base_url: str = "https://api.siliconflow.cn/v1"
     openai_embedding_api_key: SecretStr = SecretStr("")
     openai_embedding_model: str = "BAAI/bge-m3"
-    openai_embedding_dim: int = 1024    # BAAI/bge-m3 的向量维度；M5 建 Milvus collection 要用
+    openai_embedding_dim: int = 1024  # BAAI/bge-m3 的向量维度；M5 建 Milvus collection 要用
 
     # ---- Milvus ----
     milvus_uri: str = "http://localhost:19530"
     milvus_token: str = ""
     milvus_collection: str = "ragkit_chunks"
-    milvus_batch_size: int = 500        # 一次 upsert 多少条
+    milvus_batch_size: int = 500  # 一次 upsert 多少条
 
     # ---- 切分 ----
-    chunk_size: int = 800               # 每个 chunk 的目标字符数
-    chunk_overlap: int = 120            # 相邻 chunk 的重叠字符数
+    chunk_size: int = 800  # 每个 chunk 的目标字符数
+    chunk_overlap: int = 120  # 相邻 chunk 的重叠字符数
 
     # ---- 检索 ----
     top_k: int = 5
 
     # ---- 运行时 ----
-    max_concurrency: int = 8            # M4 用它限制同时在飞的请求数
+    max_concurrency: int = 8  # M4 用它限制同时在飞的请求数
     request_timeout: float = 60.0
     max_retries: int = 3
-
 
     @model_validator(mode="after")  # after：所有字段赋完值后才跑，所以能访问 size 和 overlap
     def _check_chunk_params(self) -> Settings:
         if self.chunk_overlap >= self.chunk_size:
             raise ValueError("chunk_overlap 必须小于 chunk_size")
         return self
-
 
 
 @lru_cache(maxsize=1)
