@@ -36,6 +36,7 @@ from .errors import (
 from .indexing import MilvusIndexer, build_schema, ingest_chunks
 from .parsing import parse_file, parse_files
 from .processing import clean_document, normalize_whitespace
+from .retrieval import Retriever, doc_filter
 from .schemas import Chunk, Document, RAGResult, ScoredChunk
 from .splitting import (
     FixedSplitter,
@@ -69,6 +70,8 @@ __all__ = [
     "MilvusIndexer",
     "ingest_chunks",
     "build_schema",
+    "Retriever",
+    "doc_filter",
     "RagkitError",
     "ParseError",
     "SplitError",

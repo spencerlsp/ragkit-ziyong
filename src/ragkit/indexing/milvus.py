@@ -15,14 +15,34 @@ import asyncio
 from collections.abc import Sequence
 from typing import Any
 
-from pymilvus import AsyncMilvusClient, MilvusException
+from pymilvus import AnnSearchRequest, AsyncMilvusClient, MilvusException, RRFRanker
 
 from ..config import Settings, get_settings
-from ..errors import IndexingError
-from ..schemas import Chunk
-from .schema import DOC_ID_FIELD, build_index_params, build_schema
+from ..errors import IndexingError, RetrievalError
+from ..schemas import Chunk, ScoredChunk
+from .schema import (
+    CHUNK_ID_FIELD,
+    CHUNK_INDEX_FIELD,
+    DOC_ID_FIELD,
+    SPARSE_FIELD,
+    TEXT_FIELD,
+    VECTOR_FIELD,
+    build_index_params,
+    build_schema,
+)
 
 __all__ = ["MilvusIndexer"]
+
+# 检索时要取回的字段。
+# ⚠️ 故意**不包含 embedding** —— 每条命中带 1024 个浮点数会让返回体积暴涨几十倍，
+#    而检索结果里我们根本用不到它（真要向量的话重新 embed 一次更省事）。
+_SEARCH_OUTPUT_FIELDS = [
+    CHUNK_ID_FIELD,
+    DOC_ID_FIELD,
+    TEXT_FIELD,
+    CHUNK_INDEX_FIELD,
+    "source",  # 动态字段
+]
 
 
 class MilvusIndexer:
@@ -378,3 +398,236 @@ class MilvusIndexer:
         except MilvusException as exc:
             raise IndexingError(f"删除 collection 失败: {exc}", source=self._collection) from exc
         self._ready = False
+
+    @staticmethod
+    def _to_scored_chunk(hit: dict[str, Any]) -> ScoredChunk:
+        """把 Milvus 的一条命中转成 ScoredChunk。已经写好了。
+
+        命中字典的形状是 ``{"<主键字段名>": 值, "distance": 分数, "entity": {...}}``。
+        注意主键那个键名是**字段名本身**（我们这里是 "chunk_id"），
+        不是固定的 "id" —— 官方文档的例子里主键正好叫 id，容易看错。
+        所以最稳的读法是从 ``entity`` 里取（output_fields 里要了它）。
+        """
+        # 用 `or {}` 而不是默认参数：服务端可能返回 entity=None，
+        # 那种情况下 get 的默认值不会生效，后面 .get 会直接 AttributeError。
+        entity = hit.get("entity") or {}
+        return ScoredChunk(
+            chunk=Chunk(
+                chunk_id=str(entity.get(CHUNK_ID_FIELD, "")),
+                doc_id=str(entity.get(DOC_ID_FIELD, "")),
+                text=str(entity.get(TEXT_FIELD, "")),
+                index=int(entity.get(CHUNK_INDEX_FIELD, 0)),
+                metadata={"source": str(entity.get("source", ""))},
+            ),
+            score=float(hit["distance"]),
+        )
+
+    async def search(
+        self,
+        query_vector: Sequence[float],
+        *,
+        top_k: int = 5,
+        filter_expr: str = "",
+    ) -> list[ScoredChunk]:
+        """用查询向量检索，返回按相关度降序的 ScoredChunk。
+
+        TODO(你)：五步。
+
+        1) 校验查询向量的维度：
+
+               if len(query_vector) != self._dim:
+                   raise RetrievalError(
+                       f"查询向量是 {len(query_vector)} 维，但库里的向量是 {self._dim} 维",
+                       source=self._collection,
+                   )
+
+           这是第四道维度防线了。为什么这里也要拦？
+           因为查询向量是**调用方算出来的**：他可能用了另一个 embedding 模型，
+           或者拼接时搞错了。维度不匹配时服务端给的错误很含糊，
+           在这里拦住能直接告诉他「768 vs 1024」。
+
+        2) 校验 top_k：
+
+               if top_k <= 0:
+                   raise RetrievalError(f"top_k 必须为正数，收到 {top_k}")
+
+        3) ``await self.ensure_collection()``
+
+        4) 调用检索：
+
+               hits = await self._client.search(
+                   collection_name=self._collection,
+                   data=[list(query_vector)],
+                   filter=filter_expr,
+                   limit=top_k,
+                   output_fields=list(_SEARCH_OUTPUT_FIELDS),
+               )
+
+           两个细节：
+             * ``data=[list(query_vector)]`` —— Milvus 支持一次查多个向量，
+               所以接口收的是「一批查询向量」。我们只查一个也要包一层。
+               返回值同理是 ``List[List[dict]]``，真正的命中在 ``hits[0]``。
+             * **不传 search_params**。索引是用 COSINE 建的，服务端默认就用它；
+               显式传一个和索引不一致的 metric_type 反而会报错。
+               这也说明「度量方式」是**建索引那一刻定下的全局约定**，
+               不是每次查询的选项。
+
+           别让 MilvusException 漏出去，用 try/except 翻译成 RetrievalError。
+
+        5) 转换 —— 而且是**带异常翻译的转换**：
+
+               try:
+                   return [self._to_scored_chunk(hit) for hit in hits[0]]
+               except (KeyError, TypeError, ValueError) as exc:
+                   raise RetrievalError(
+                       f"Milvus 返回的命中无法解析（字段缺失或为空）: {exc}",
+                       source=self._collection,
+                   ) from exc
+
+           为什么要包一层：服务端返回的是**弱类型的 dict**，
+           转成 ScoredChunk 这种强类型模型时，失败方式五花八门 ——
+             * 少个字段 → KeyError
+             * entity 不是 dict、distance 不是数字 → TypeError
+             * text 是空字符串 → pydantic 的 ValidationError（它是 ValueError 的子类）
+           不翻译的话，最后一种会漏出一个 pydantic 异常，
+           而调用方写的是 ``except RetrievalError`` —— 兜不住。
+
+           **「把弱类型数据转成强类型」是每个外部接口都有的边界，
+             边界上的异常必须统一成自己的类型。**
+
+        ⚠️ **分数方向**：COSINE 是**越大越相似**，Milvus 也已经按分数降序返回。
+           如果哪天把索引换成 L2（距离，越小越相似），
+           整个上层的排序、阈值、乃至「取前 k 条」都要跟着反过来 ——
+           而这不会报任何错。度量方式的方向必须一路传导到最上层。
+        """
+        # 1. 校验向量维度
+        if len(query_vector) != self._dim:
+            raise RetrievalError(
+                f"查询向量是 {len(query_vector)} 维，但库里的向量是 {self._dim} 维",
+                source=self._collection,
+            )
+
+        # 2. 校验top_k合法性
+        if top_k <= 0:
+            raise RetrievalError(f"top_k 必须为正数，收到 {top_k}")
+
+        # 3. 确保集合存在
+        await self.ensure_collection()
+
+        # 4. Milvus向量检索，捕获底层异常
+        try:
+            hits = await self._client.search(
+                collection_name=self._collection,
+                data=[list(query_vector)],
+                filter=filter_expr,
+                limit=top_k,
+                output_fields=list(_SEARCH_OUTPUT_FIELDS),
+            )
+        except MilvusException as exc:
+            raise RetrievalError(f"Milvus向量检索失败: {exc}", source=self._collection) from exc
+
+        # 5. 转换：弱类型 dict -> 强类型 ScoredChunk，失败统一翻译
+        try:
+            return [self._to_scored_chunk(hit) for hit in hits[0]]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RetrievalError(
+                f"Milvus 返回的命中无法解析（字段缺失或为空）: {exc}",
+                source=self._collection,
+            ) from exc
+
+    async def hybrid_search(
+        self,
+        query_vector: Sequence[float],
+        query_text: str,
+        *,
+        top_k: int = 5,
+        filter_expr: str = "",
+        candidate_k: int | None = None,
+    ) -> list[ScoredChunk]:
+        """混合检索：稠密向量 + BM25 关键词，两路结果用 RRF 融合。
+
+        为什么需要两个入参（向量 + 原文）：
+            稠密那一路要向量；稀疏那一路要**原始查询文本** ——
+            服务端会用 BM25 函数现场把文本转成稀疏向量，所以我们传文本。
+            同一个查询的两种表示，缺一不可。
+
+        RRF（Reciprocal Rank Fusion，倒数排名融合）是什么：
+            对每一路结果里的第 i 名，贡献 ``1 / (k + i)``（k 默认 60），
+            再把两路的贡献相加作为最终分数。
+
+            它最大的好处是**不需要归一化**。余弦相似度是 0~1，
+            BM25 分数可能是 0~30，量纲完全不同，直接加权相加毫无意义；
+            而 RRF 只看**排名**、不看分数，天然绕开了量纲问题。
+            这就是它成为混合检索默认选择的原因。
+
+            代价是：融合后我们**丢掉了原始分数信息**。
+            想保留可比的分数，得改用 ``WeightedRanker``（但要先自己把两路
+            分数归一化到同一量纲，那才是真正的麻烦）。
+
+        参数 ``candidate_k``：每一路各召回多少条来参与融合。
+            默认是 ``top_k * 4``。为什么候选池要比最终结果大：
+            RRF 只能看见每一路**给出的排名**。如果两路都只给 5 条，
+            那么「稠密排第 100、关键词排第 1」的文档根本进不了融合 ——
+            而它恰恰是混合检索最该捞回来的那种结果。
+            候选池越大融合越有信息，代价是每路的检索开销。
+
+        ⚠️ **混合模式的 score 不是余弦相似度，是 RRF 分数。**
+           量级大约 0~0.033（k=60 时，两路各最多贡献 1/60）。
+           和稠密模式的 0~1 完全不可比 ——
+           所以 Retriever 在 hybrid 模式下会**拒绝** score_threshold，
+           否则你用 0.7 当阈值会把结果全部滤光，还以为是「搜不到」。
+        """
+        if not query_text.strip():
+            raise RetrievalError(
+                "混合检索的 query_text 不能为空（BM25 那一路需要原始文本）",
+                source=self._collection,
+            )
+        if len(query_vector) != self._dim:
+            raise RetrievalError(
+                f"查询向量是 {len(query_vector)} 维，但库里的向量是 {self._dim} 维",
+                source=self._collection,
+            )
+        if top_k <= 0:
+            raise RetrievalError(f"top_k 必须为正数，收到 {top_k}")
+
+        await self.ensure_collection()
+
+        pool = candidate_k if candidate_k is not None else top_k * 4
+        # 两个分支复用同一个过滤条件：只在候选阶段就过滤，
+        # 比「先各取一堆再在客户端过滤」省得多。
+        expr = filter_expr or None
+
+        try:
+            hits = await self._client.hybrid_search(
+                collection_name=self._collection,
+                reqs=[
+                    AnnSearchRequest(
+                        data=[list(query_vector)],
+                        anns_field=VECTOR_FIELD,
+                        param={"metric_type": "COSINE"},
+                        limit=pool,
+                        expr=expr,
+                    ),
+                    AnnSearchRequest(
+                        data=[query_text],
+                        anns_field=SPARSE_FIELD,
+                        param={"metric_type": "BM25"},
+                        limit=pool,
+                        expr=expr,
+                    ),
+                ],
+                ranker=RRFRanker(),
+                limit=top_k,
+                output_fields=list(_SEARCH_OUTPUT_FIELDS),
+            )
+        except MilvusException as exc:
+            raise RetrievalError(f"混合检索失败: {exc}", source=self._collection) from exc
+
+        # 转换失败也要翻译 —— 和 dense 的 search() 保持一致
+        try:
+            return [self._to_scored_chunk(hit) for hit in hits[0]]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RetrievalError(
+                f"Milvus 返回的命中无法解析（字段缺失或为空）: {exc}",
+                source=self._collection,
+            ) from exc

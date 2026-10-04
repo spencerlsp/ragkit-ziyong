@@ -27,6 +27,7 @@ from ragkit.indexing import MilvusIndexer, build_index_params, build_schema, ing
 from ragkit.indexing.schema import (
     CHUNK_ID_FIELD,
     DOC_ID_FIELD,
+    SPARSE_FIELD,
     VECTOR_FIELD,
 )
 from ragkit.schemas import Chunk
@@ -82,6 +83,7 @@ class FakeMilvusClient:
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.created: list[dict[str, Any]] = []
         self.rows: list[dict[str, Any]] = []
+        self.search_hits: list[list[dict[str, Any]]] = []
         self.collections: set[str] = set()
         self.closed = False
         self.fail_on: str | None = None
@@ -95,6 +97,46 @@ class FakeMilvusClient:
 
     def names(self) -> list[str]:
         return [name for name, _ in self.calls]
+
+    async def search(
+        self,
+        collection_name: str,
+        data: Any = None,
+        filter: str = "",
+        limit: int = 10,
+        output_fields: list[str] | None = None,
+        **kwargs: Any,
+    ) -> list[list[dict[str, Any]]]:
+        self._record(
+            "search",
+            {"collection_name": collection_name, "data": data, "filter": filter, "limit": limit},
+        )
+        await asyncio.sleep(0)
+        self._maybe_fail("search")
+        return self.search_hits
+
+    async def hybrid_search(
+        self,
+        collection_name: str,
+        reqs: list[Any] | None = None,
+        ranker: Any = None,
+        limit: int = 10,
+        output_fields: list[str] | None = None,
+        **kwargs: Any,
+    ) -> list[list[dict[str, Any]]]:
+        self._record(
+            "hybrid_search",
+            {
+                "collection_name": collection_name,
+                "reqs": reqs,
+                "ranker": ranker,
+                "limit": limit,
+                "output_fields": output_fields,
+            },
+        )
+        await asyncio.sleep(0)
+        self._maybe_fail("hybrid_search")
+        return self.search_hits
 
     async def has_collection(self, collection_name: str, **kwargs: Any) -> bool:
         self._record("has_collection", {"collection_name": collection_name})
@@ -165,11 +207,41 @@ class StubEmbedder:
 
 
 def test_schema_declares_all_fields() -> None:
-    """schema 应该恰好声明 5 个字段，且名字都对得上。"""
+    """默认 schema 声明 6 个字段（含 BM25 用的稀疏向量），名字都对得上。"""
     schema = build_schema(dim=8)
-    assert len(schema.fields) == 5
+    assert len(schema.fields) == 6
     names = {field.name for field in schema.fields}
-    assert names == {CHUNK_ID_FIELD, DOC_ID_FIELD, "text", "chunk_index", VECTOR_FIELD}
+    assert names == {
+        CHUNK_ID_FIELD,
+        DOC_ID_FIELD,
+        "text",
+        "chunk_index",
+        VECTOR_FIELD,
+        SPARSE_FIELD,
+    }
+
+
+def test_schema_declares_bm25_function() -> None:
+    """BM25 函数负责「text -> sparse」的自动转换，必须声明出来。"""
+    schema = build_schema(dim=8)
+
+    assert len(schema.functions) == 1
+    fn = schema.functions[0]
+    assert fn.name == "bm25_text_to_sparse"
+    assert fn.type == 1  # FunctionType.BM25
+    assert list(fn.input_field_names) == ["text"]
+    assert list(fn.output_field_names) == [SPARSE_FIELD]
+
+
+def test_schema_can_skip_sparse() -> None:
+    """with_sparse=False 时回到纯稠密 schema（5 个字段、0 个函数）。
+
+    保留这条路径是为了「从稠密起步、以后再升级混合」的场景，
+    也是万一你的 Milvus 版本不支持 BM25 时的退路。
+    """
+    schema = build_schema(dim=8, with_sparse=False)
+    assert len(schema.fields) == 5
+    assert len(schema.functions) == 0
 
 
 def test_schema_uses_configured_dim() -> None:
@@ -197,9 +269,25 @@ def test_schema_rejects_bad_dim() -> None:
 def test_index_params_use_cosine() -> None:
     """度量方式必须是 COSINE（值越大越相似），它会一路传导到 M6 的排序逻辑。"""
     params = build_index_params()
-    assert len(params) == 1
     assert params[0].field_name == VECTOR_FIELD
     assert params[0].get_index_configs()["metric_type"] == "COSINE"
+
+
+def test_index_params_include_bm25_sparse_index() -> None:
+    """稀疏字段必须配 SPARSE_INVERTED_INDEX + BM25 —— Milvus 的固定搭配。"""
+    params = build_index_params()
+
+    assert len(params) == 2
+    sparse = params[1]
+    assert sparse.field_name == SPARSE_FIELD
+    configs = sparse.get_index_configs()
+    assert configs["index_type"] == "SPARSE_INVERTED_INDEX"
+    assert configs["metric_type"] == "BM25"
+
+
+def test_index_params_can_skip_sparse() -> None:
+    """纯稠密模式下只建一个索引。"""
+    assert len(build_index_params(with_sparse=False)) == 1
 
 
 # ---------------------------------------------------------------------------
