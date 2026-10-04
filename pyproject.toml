@@ -12,6 +12,7 @@ dependencies = [
     "httpx>=0.28.1",
     "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
+    "pymilvus>=3.0.2",
     "pypdf>=6.19.0",
     "python-docx>=1.2.0",
 ]
@@ -31,6 +32,10 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"        # 以后写 async def test_xxx 不用再加 @pytest.mark.asyncio
+
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple/"
+default = true
 
 [tool.ruff]
 line-length = 100

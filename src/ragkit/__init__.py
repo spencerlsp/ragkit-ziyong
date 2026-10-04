@@ -33,6 +33,7 @@ from .errors import (
     RetrievalError,
     SplitError,
 )
+from .indexing import MilvusIndexer, build_schema, ingest_chunks
 from .parsing import parse_file, parse_files
 from .processing import clean_document, normalize_whitespace
 from .schemas import Chunk, Document, RAGResult, ScoredChunk
@@ -65,6 +66,9 @@ __all__ = [
     "Embedder",
     "create_embedder",
     "embed_all",
+    "MilvusIndexer",
+    "ingest_chunks",
+    "build_schema",
     "RagkitError",
     "ParseError",
     "SplitError",
