@@ -21,6 +21,7 @@ TODO(你)：把 ragkit 的公共接口挂出来。
 注意：这里 import 的东西必须真的存在，否则 ``import ragkit`` 直接炸。
 后面每加一个模块（parsing / splitting / indexing ...），都回来这里补一行。
 """
+
 from .config import Settings, get_settings
 from .errors import (
     EmbeddingError,
@@ -31,9 +32,29 @@ from .errors import (
     RetrievalError,
     SplitError,
 )
+from .parsing import parse_file, parse_files
+from .processing import clean_document, normalize_whitespace
 from .schemas import Chunk, Document, RAGResult, ScoredChunk
+from .splitting import (
+    FixedSplitter,
+    RecursiveSplitter,
+    Splitter,
+    split_document,
+    split_documents,
+    write_chunks_jsonl,
+)
 
 __all__ = [
+    "parse_file",
+    "parse_files",
+    "clean_document",
+    "normalize_whitespace",
+    "split_document",
+    "split_documents",
+    "Splitter",
+    "RecursiveSplitter",
+    "FixedSplitter",
+    "write_chunks_jsonl",
     "Document",
     "Chunk",
     "ScoredChunk",
