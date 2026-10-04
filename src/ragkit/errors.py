@@ -14,6 +14,7 @@ __all__ = [
     "IndexingError",
     "RetrievalError",
     "GenerationError",
+    "EvaluationError",
 ]
 
 
@@ -67,3 +68,7 @@ class RetrievalError(RagkitError):
 
 class GenerationError(RagkitError):
     """调用 LLM 生成答案失败。"""
+
+
+class EvaluationError(RagkitError):
+    """评估过程本身出错（数据集格式不对、没有可用样本等）。"""

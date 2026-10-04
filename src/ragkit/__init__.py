@@ -26,6 +26,7 @@ from .config import Settings, get_settings
 from .embedding import Embedder, create_embedder, embed_all
 from .errors import (
     EmbeddingError,
+    EvaluationError,
     GenerationError,
     IndexingError,
     ParseError,
@@ -33,6 +34,7 @@ from .errors import (
     RetrievalError,
     SplitError,
 )
+from .evaluation import EvalReport, EvalSample, evaluate, load_dataset
 from .indexing import MilvusIndexer, build_schema, ingest_chunks
 from .parsing import parse_file, parse_files
 from .processing import clean_document, normalize_whitespace
@@ -72,6 +74,10 @@ __all__ = [
     "build_schema",
     "Retriever",
     "doc_filter",
+    "evaluate",
+    "EvalSample",
+    "EvalReport",
+    "load_dataset",
     "RagkitError",
     "ParseError",
     "SplitError",
@@ -79,4 +85,5 @@ __all__ = [
     "IndexingError",
     "RetrievalError",
     "GenerationError",
+    "EvaluationError",
 ]
