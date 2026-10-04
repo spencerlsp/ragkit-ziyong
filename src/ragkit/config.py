@@ -95,6 +95,7 @@ class Settings(BaseSettings):
     openai_embedding_api_key: SecretStr = SecretStr("")
     openai_embedding_model: str = "BAAI/bge-m3"
     openai_embedding_dim: int = 1024  # BAAI/bge-m3 的向量维度；M5 建 Milvus collection 要用
+    openai_embedding_batch_size: int = 32  # 一次请求塞多少条文本（服务端一般有上限）
 
     # ---- Milvus ----
     milvus_uri: str = "http://localhost:19530"
@@ -113,6 +114,7 @@ class Settings(BaseSettings):
     max_concurrency: int = 8  # M4 用它限制同时在飞的请求数
     request_timeout: float = 60.0
     max_retries: int = 3
+    retry_base_delay: float = 1.0  # 指数退避的基数：1s、2s、4s……
 
     @model_validator(mode="after")  # after：所有字段赋完值后才跑，所以能访问 size 和 overlap
     def _check_chunk_params(self) -> Settings:

@@ -23,6 +23,7 @@ TODO(你)：把 ragkit 的公共接口挂出来。
 """
 
 from .config import Settings, get_settings
+from .embedding import Embedder, create_embedder, embed_all
 from .errors import (
     EmbeddingError,
     GenerationError,
@@ -61,6 +62,9 @@ __all__ = [
     "RAGResult",
     "Settings",
     "get_settings",
+    "Embedder",
+    "create_embedder",
+    "embed_all",
     "RagkitError",
     "ParseError",
     "SplitError",
