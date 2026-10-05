@@ -3,7 +3,7 @@
 > 一个「能用、能懂、能改」的通用 RAG 工具包：**文件解析 → 清洗切分 → 向量化 → Milvus 索引 → 检索（稠密 / 混合 / 重排）→ 评估**。
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
-![Tests](https://img.shields.io/badge/tests-201%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-206%20passed-brightgreen)
 ![Async](https://img.shields.io/badge/asyncio-first-orange)
 ![Vector%20DB](https://img.shields.io/badge/Milvus-2.5%2B-00A1EA)
 
@@ -29,6 +29,7 @@
 - [API 一览](#api-一览)
 - [配置参考](#配置参考)
 - [跑一遍完整示例](#跑一遍完整示例)
+- [作为 MCP 服务端给 agent 用](#作为-mcp-服务端给-agent-用)
 - [评估结果](#评估结果)
 - [常见坑速查](#常见坑速查)
 - [开发](#开发)
@@ -658,6 +659,57 @@ uv run python scripts/eval_demo.py examples/sample_doc.md --rerank
 
 ---
 
+## 作为 MCP 服务端给 agent 用
+
+ragkit 可以把自己注册成一个 MCP 工具服务器，让本地 agent 直接检索你的知识库。
+
+```bash
+uv sync --extra mcp          # mcp 是可选依赖，默认不装
+uv run python -m ragkit.mcp_server
+```
+
+**只暴露了一个工具**：`search_knowledge_base(query, top_k)`。
+
+**为什么只有只读检索** —— 这些工具会被 agent 自动注册给模型，而**模型能调什么，就等于它能做什么**。
+入库、删除、重建 collection 都是运维动作，留在 CLI 里；否则模型一句「帮我清理一下」就能把库删了。
+
+**返回文本、不带分数** —— 混合检索的分是 RRF（0~0.033），加了重排又变成 0~1，
+同一个字段两种量纲，模型解读不了，实测会让它得出「匹配度很低」这种错误结论。分数是给调试用的。
+
+### 客户端配置
+
+```json
+{
+  "mcpServers": {
+    "ragkit": {
+      "command": "uv",
+      "args": ["run", "--extra", "mcp", "python", "-m", "ragkit.mcp_server"],
+      "cwd": "D:\\path\\to\\ragkit"
+    }
+  }
+}
+```
+
+> ⚠️ **`cwd` 一定要填。** `.env` 是按工作目录找的，而 agent 拉起子进程时的工作目录由客户端决定。
+> 代码里已经兜了一层（会去项目根找 `.env`），但显式写上最保险。
+
+### 环境变量
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `RAGKIT_MCP_MODE` | `hybrid` | `dense` / `hybrid`；写错会在**启动时**直接报错 |
+| `RAGKIT_MCP_RERANK` | `1` | 设 `0` 关闭重排。**没配 `RERANK_API_KEY` 时必须设成 0**，否则每次检索都失败 |
+
+> 检索策略走环境变量而不是工具参数，因为它属于**部署决策** ——
+> 不该让模型每次现挑（它没有判断依据，只会随便试）。
+
+### 调试注意
+
+**stdio 模式下 stdout 是 JSON-RPC 协议通道。** 任何 `print()` 都会污染协议流，
+让客户端解析失败，而且报错完全指不到原因。调试信息一律走 `logging`（默认输出到 stderr）。
+
+---
+
 ## 评估结果
 
 用 `examples/sample_doc.md`（2825 字 → 9 块）+ 11 个问题（关键词自动标注），`top_k=3`：
@@ -699,7 +751,7 @@ ndcg            0.876      0.966      1.000
 uv run ruff format .      # 排版
 uv run ruff check .       # 静态检查
 uv run mypy src           # 类型检查（当前 0 错误）
-uv run pytest -q          # 201 条测试，全部离线
+uv run pytest -q          # 206 条测试，全部离线
 ```
 
 **测试不需要 Milvus，也不需要 API key**，靠的是三件事：
@@ -725,7 +777,7 @@ src/ragkit/
 ├── evaluation/        HitRate / Recall / MRR / NDCG
 └── pipeline.py        Ragkit 门面
 
-tests/                 201 条测试，离线
+tests/                 206 条测试，离线
 scripts/               端到端 demo 与评估
 examples/              示例文档
 ```
@@ -737,7 +789,8 @@ examples/              示例文档
 | 限制 | 说明 |
 |---|---|
 | **没有生成环节** | 只做检索，不调 LLM 出答案。`RAGResult` 模型已就位，接上即可 |
-| **CI 里没有真 Milvus** | 201 条测试全离线，证明**逻辑**正确，证明不了**契约**。见「设计笔记」第 5 条 |
+| **CI 里没有真 Milvus** | 206 条测试全离线，证明**逻辑**正确，证明不了**契约**。见「设计笔记」第 5 条 |
+| **MCP 层只测了格式化函数** | `search_knowledge_base` 要连真 Milvus，属于集成测试范畴 |
 | **测试替身有三份重复** | `FakeMilvusClient` 手抄了三份并已漂移。正式落点已定为 [`tests/fakes.py`](tests/fakes.py)，存量迁移待办 |
 | **自动标注的评估集** | 见[评估结果](#评估结果)，它偏向关键词匹配 |
 | **`Ragkit` 没暴露 `flush()`** | 大批量导入想手动控制刷盘时机，得用底层的 `MilvusIndexer` |
