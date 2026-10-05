@@ -31,7 +31,7 @@ from typing import Any
 
 from .config import get_settings
 from .errors import RagkitError
-from .evaluation import evaluate, load_dataset
+from .evaluation import EvalReport, evaluate, load_dataset
 from .parsing import parse_file, parse_files
 from .pipeline import Ragkit
 from .processing import clean_document
@@ -63,6 +63,30 @@ def _leaf_errors(error: BaseException) -> list[BaseException]:
     if isinstance(error, BaseExceptionGroup):
         return [leaf for sub in error.exceptions for leaf in _leaf_errors(sub)]
     return [error]
+
+
+def _eval_mismatch_hint(report: EvalReport) -> str | None:
+    """命中率为 0、却没有任何样本失败时，几乎一定是标注和库里的数据对不上。
+
+    这是这个项目里最容易踩、也最难自查的坑：``chunk_id`` 绑定在切分参数上，
+    改了 ``CHUNK_SIZE`` / ``CHUNK_OVERLAP`` 就会全变；而检索本身**完全正常**，
+    只是拿到的 id 和你标注的 id 一个都对不上 —— 指标于是全是 0，一句报错都没有。
+
+    错误是静默的，所以这里必须替用户问一句「你确定两边是同一次切分吗」。
+    """
+    if report.n_failed or not report.results:
+        return None
+    if report.metrics.get("hit_rate", 0.0) > 0.0:
+        return None
+    return (
+        "命中率是 0，但没有任何样本失败 —— 这通常不是检索坏了，"
+        "而是**标注和库里的数据对不上**。\n"
+        "  最常见的原因：chunk_id 绑定在切分参数上，"
+        "入库时用的参数和生成标注时不一样。\n"
+        "  检查：先 `ragkit count` 看库里有多少条；确认 .env 里的"
+        " CHUNK_SIZE / CHUNK_OVERLAP 和生成标注时一致，"
+        "或者重新 `ragkit ingest <文档> --reset` 后按当前参数重新标注。"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +279,10 @@ async def cmd_eval(args: argparse.Namespace) -> int:
         print(f"\n⚠️ {report.n_failed} 条样本失败：")
         for failure in report.failures[:5]:
             print(f"  - {failure.question}: {failure.error}")
+
+    hint = _eval_mismatch_hint(report)
+    if hint:
+        print(f"\n⚠️ {hint}", file=sys.stderr)
     return EXIT_OK
 
 
