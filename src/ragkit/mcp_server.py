@@ -142,10 +142,20 @@ def main() -> None:
     try:
         mcp.run()  # 默认 transport="stdio"：由 agent 拉起来，走标准输入输出通信
     finally:
-        # 进程退出时 OS 会关掉套接字，所以这是「优雅」而非「必须」；
-        # 但有些客户端会反复重启 server 进程，别每次都留一个没关的连接池。
+        # ⚠️ 这里**必须**吞掉异常。
+        #
+        # mcp.run() 内部跑过并关掉了它自己的事件循环，而 Ragkit 的
+        # httpx / Milvus 客户端是在那个 loop 上创建的。现在 asyncio.run()
+        # 会新建一个 loop，在新 loop 里关旧 loop 的连接池，可能抛
+        # "Event loop is closed"。
+        #
+        # 更要紧的是：这是在退出路径上，抛出去会掩盖真正的异常、污染退出码。
+        # 反正进程马上结束，OS 会回收套接字 —— 关不上也不影响任何东西。
         if _rag is not None:
-            asyncio.run(_rag.aclose())
+            try:
+                asyncio.run(_rag.aclose())
+            except Exception:  # noqa: BLE001
+                logger.debug("关闭 Ragkit 失败（进程即将退出，忽略）", exc_info=True)
 
 
 if __name__ == "__main__":

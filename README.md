@@ -683,16 +683,25 @@ uv run python -m ragkit.mcp_server
 {
   "mcpServers": {
     "ragkit": {
-      "command": "uv",
-      "args": ["run", "--extra", "mcp", "python", "-m", "ragkit.mcp_server"],
-      "cwd": "D:\\path\\to\\ragkit"
+      "command": "D:/path/to/ragkit/.venv/Scripts/python.exe",
+      "args": ["-m", "ragkit.mcp_server"],
+      "cwd": "D:/path/to/ragkit"
     }
   }
 }
 ```
 
+**直接调 venv 里的 python，不要用 `uv run`。** 两个原因：
+
+- `uv run` 每次启动都要做一遍依赖解析检查，慢；
+- 如果父进程已经设了 `VIRTUAL_ENV`（很多工具会这么干），`uv run` 会打一行
+  「`VIRTUAL_ENV` does not match the project environment path」的警告。
+  它走 stderr、不影响协议，但每次启动都刷一遍很烦。
+
 > ⚠️ **`cwd` 一定要填。** `.env` 是按工作目录找的，而 agent 拉起子进程时的工作目录由客户端决定。
 > 代码里已经兜了一层（会去项目根找 `.env`），但显式写上最保险。
+>
+> 如果更习惯 `uv`，`{"command": "uv", "args": ["run", "--extra", "mcp", "python", "-m", "ragkit.mcp_server"]}` 也能用，只是会多一次解析和可能的警告。
 
 ### 环境变量
 
