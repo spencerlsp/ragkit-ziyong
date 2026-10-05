@@ -30,57 +30,7 @@ async def ingest_chunks(
     replace_documents: bool = True,
     flush: bool = True,
 ) -> int:
-    """把 chunk 向量化并写进 Milvus，返回写入条数。
-
-    TODO(你)：按下面的骨架实现。
-
-        if not chunks:
-            return 0
-
-        # 「谁创建，谁负责销毁」—— M4 学到的原则，在组合两个组件时更关键
-        owns_embedder = embedder is None
-        owns_indexer = indexer is None
-        embedder = embedder or create_embedder()
-        indexer = indexer or MilvusIndexer()
-
-        try:
-            await indexer.ensure_collection()
-
-            if replace_documents:
-                for doc_id in {chunk.doc_id for chunk in chunks}:
-                    await indexer.delete_document(doc_id)
-
-            vectors = await embed_all(
-                embedder, [chunk.text for chunk in chunks], batch_size=batch_size
-            )
-            return await indexer.upsert_chunks(chunks, vectors)
-        finally:
-            if owns_embedder:
-                await embedder.aclose()
-            if owns_indexer:
-                await indexer.aclose()
-
-    四个要点：
-
-      1) ``{chunk.doc_id for chunk in chunks}`` 是个**集合推导**，顺手去重。
-         一批 chunk 通常来自同一个文档，但接口允许混合来源；
-         对同一个 doc_id 删两次是浪费（还可能踩到删除的并发坑）。
-
-      2) **删除是串行的，不走并发**。只是几次 RPC，串行足够快；
-         而且并发删除同一个 collection 更容易出问题。
-         这是个刻意的取舍：**并发不是免费的，只在收益明显时才用。**
-
-      3) **``finally`` 里只关自己创建的东西**。如果调用方传了 embedder 进来，
-         他可能还要继续用，你关掉就是替他做了决定。
-         这是 M4 那条「谁创建，谁负责销毁」在**组合两个组件**时的直接应用 ——
-         组合场景比单组件更容易犯这个错。
-
-      4) **为什么先 ensure_collection 再删除**：
-         delete_document 作用在一个不存在的 collection 上会报错。
-         先确保它存在，删除一个空 collection 是安全的（删 0 条）。
-
-    返回 upsert 的条数，也就是真正写进去的 chunk 数。
-    """
+    """把 chunk 向量化并写进 Milvus，返回写入条数。"""
     if not chunks:
         return 0
 

@@ -19,26 +19,7 @@ __all__ = [
 
 
 class RagkitError(Exception):
-    """ragkit 所有异常的基类。
-
-    TODO(你)：实现 ``__init__``
-
-    签名（照着抄，不要改）：::
-
-        def __init__(self, message: str, *, source: str | None = None) -> None:
-
-    要做三件事：
-        1) ``super().__init__(message)``
-           这一步最关键 —— 不调用它，``str(err)`` 会是空字符串，日志里啥也看不到。
-        2) ``self.message = message``
-        3) ``self.source = source``
-           source 表示「是谁出的错」：文件路径、Milvus collection 名、模型名……
-
-    细节提示：
-        - ``*`` 表示 source 只能按关键字传：``RagkitError("坏了", source="a.txt")``。
-          这样以后加参数也不会悄悄改坏已有的位置参数调用。
-        - 不需要写 ``__str__``，父类的实现已经够用了。
-    """
+    """ragkit 所有异常的基类。"""
 
     def __init__(self, message: str, *, source: str | None = None) -> None:
         super().__init__(message)

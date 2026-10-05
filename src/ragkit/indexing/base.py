@@ -28,7 +28,7 @@ __all__ = ["VectorStore"]
 class VectorStore(Protocol):
     """chunk + 向量的持久化与检索接口。
 
-    ★ 和 M4 的 ``Embedder``、M3 的 ``Splitter`` 是同一套路 ★
+    和 M4 的 ``Embedder``、M3 的 ``Splitter`` 是同一套路
     定义一个「能力」，让上层依赖能力而不是某个具体数据库。
     """
 

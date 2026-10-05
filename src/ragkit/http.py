@@ -74,7 +74,7 @@ class JsonClient:
     async def post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         """发一次带指数退避重试的 POST，返回解析后的 JSON。
 
-        ★ 这段代码真正的一课是：**分清哪些错误该重试**。
+        这段代码真正的一课是：**分清哪些错误该重试**。
 
           该重试（换个时间重试结果可能就变了）：
             * 超时 / 连接被重置 / DNS 抖动 → TimeoutException、TransportError

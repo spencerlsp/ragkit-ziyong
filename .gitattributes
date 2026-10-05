@@ -1,0 +1,16 @@
+# 统一行尾：仓库里一律存 LF，检出时按平台转换。
+# 不加这个文件的话，每个人的 core.autocrlf 设置不同，
+# 提交时会出现满屏的 "LF will be replaced by CRLF" 警告，
+# 而且 Windows 和 macOS 之间来回提交会产生整文件 diff。
+* text=auto
+
+# 这些是二进制，别做行尾转换（会把文件改坏）
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+*.docx binary
+
+# uv.lock 内容很多且是自动生成的，在 GitHub 的 diff 里折叠显示
+uv.lock linguist-generated=true

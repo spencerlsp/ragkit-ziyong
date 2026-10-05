@@ -23,7 +23,7 @@ __all__ = ["Parser", "register", "get_parser", "supported_extensions"]
 class Parser(Protocol):
     """解析器协议 —— 描述「一个解析器长什么样」，而不是规定「必须继承谁」。
 
-    ★ 这是模仿案例 ★
+    这是模仿案例
     任何类只要有一个 ``extensions`` 类属性和一个 ``async def parse`` 方法，
     **不需要继承任何东西**，就算满足这个 Parser。这叫结构化子类型
     （鸭子类型的类型化版本）。
@@ -56,27 +56,7 @@ def register(parser: Parser) -> Parser:
 
 
 def get_parser(path: Path) -> Parser:
-    """按文件后缀查出对应的解析器；查不到就抛 ParseError。
-
-    TODO(你)：实现它。
-
-    步骤：
-        1) ``ext = path.suffix.lower()``
-        2) ``parser = _PARSERS.get(ext)``
-        3) parser 是 None 就抛 ParseError。错误信息要同时说清「你给的是什么」
-           和「我支持什么」，否则用户只知道失败、不知道为什么失败：
-
-               f"不支持的文件类型 {ext!r}，当前支持：{', '.join(supported_extensions())}"
-
-           ParseError 支持 ``source=`` 关键字参数，把 ``str(path)`` 传进去，
-           报错时才能定位到具体文件。
-        4) 返回 parser
-
-    提示：
-      - ``{ext!r}`` 里的 ``!r`` 是用 repr() 格式化：没有后缀的文件会显示成
-        ``''`` 而不是一片空白。用户传了个没后缀的文件时，这个细节能省他半小时。
-      - 别用 try/except KeyError，``dict.get`` 更直接。
-    """
+    """按文件后缀查出对应的解析器；查不到就抛 ParseError。"""
     ext = path.suffix.lower()
     parser = _PARSERS.get(ext)
     if parser is None:

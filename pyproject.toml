@@ -1,7 +1,14 @@
 [project]
 name = "ragkit"
 version = "0.1.0"
-description = "Add your description here"
+description = "通用 RAG 工具包：文件解析 → 清洗切分 → 向量化 → Milvus 索引 → 检索（稠密/混合/重排）→ 评估"
+license = { text = "MIT" }
+keywords = ["rag", "retrieval", "milvus", "embedding", "rerank", "bm25", "asyncio"]
+classifiers = [
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Text Processing :: Indexing",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 readme = "README.md"
 authors = [
     { name = "ZhaoShiGuang", email = "123456789@qq.com" }

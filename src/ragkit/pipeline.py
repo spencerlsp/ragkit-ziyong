@@ -145,7 +145,7 @@ class Ragkit:
         try:
             documents = await parse_files(items)
         except ExceptionGroup as exc:
-            # ★ TaskGroup 会把子任务的异常**打包**成 ExceptionGroup（PEP 654）。
+            # TaskGroup 会把子任务的异常**打包**成 ExceptionGroup（PEP 654）。
             # 这是个很容易踩的坑：调用方写 `except ParseError` 是抓不到的，
             # 必须写 `except* ParseError` —— 而那个语法很多人没见过，
             # 报错信息也难看懂（「unhandled errors in a TaskGroup」）。

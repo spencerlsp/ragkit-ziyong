@@ -27,5 +27,6 @@ artifacts/
 .idea/
 .vscode/
 
-# 玩具
-scripts/async_playground.py
+# 示例脚本产出的中间文件
+chunks.jsonl
+data/

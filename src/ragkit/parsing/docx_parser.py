@@ -22,23 +22,7 @@ __all__ = ["DocxParser"]
 
 
 def _extract_docx_text(path: Path) -> str:
-    """同步抽取 docx 的全部段落文字。
-
-    TODO(你)：
-        1) ``doc = DocxDocument(str(path))``
-        2) 返回所有段落文字，用两个换行连接：
-
-               return "\\n\\n".join(p.text for p in doc.paragraphs)
-
-        为什么用两个换行：docx 里每个 paragraph 是**语义上的独立段落**。
-        用 "\\n\\n" 分隔，M3 按段落切分时才能识别边界；
-        只用一个 "\\n" 的话，程序没法区分「换行」和「换段」。
-
-    已知限制（把这段留在 docstring 里，别假装支持）：
-        ``doc.paragraphs`` **不包含表格里的文字**。这一版先不处理表格；
-        以后要支持，需要另外遍历 ``doc.tables`` 里的 ``cell.text``。
-        把限制写清楚，比让用户自己踩坑强。
-    """
+    """同步抽取 docx 的全部段落文字。"""
     doc = DocxDocument(str(path))
 
     return "\n\n".join(p.text for p in doc.paragraphs)
@@ -51,19 +35,7 @@ class DocxParser:
     extensions: tuple[str, ...] = (".docx",)
 
     async def parse(self, path: Path) -> Document:
-        """TODO(你)：和 PdfParser.parse 完全同一个套路。
-
-        1) try/except Exception -> ParseError 的异常翻译，包住
-           ``await run_blocking(_extract_docx_text, path)``
-        2) 空内容拦截（空文档 / 纯图片文档）
-        3) metadata：path / suffix / size_bytes / char_count
-           （docx 没有「页数」这个概念，别硬编一个 page_count）
-        4) 返回 Document(doc_id=stable_id(str(path), text), ...)
-
-        写完对比一下它和 pdf_parser.py 的重合度 —— 如果两处几乎一模一样，
-        那就是 M3 该抽公共函数的信号。**先写重复，再消除重复**，
-        别一上来就为了「优雅」抽象出没人看得懂的东西。
-        """
+        """解析 .docx 文件。底层异常统一翻译成 ParseError；抽不出文字也报错。"""
         try:
             text = await run_blocking(_extract_docx_text, path)
         except Exception as exc:

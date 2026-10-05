@@ -20,32 +20,7 @@ __all__ = ["PdfParser"]
 
 
 def _extract_pdf_text(path: Path) -> tuple[str, int]:
-    """同步地把 PDF 每页文字抽出来，返回 (全文, 页数)。
-
-    TODO(你)：实现这个**同步**函数（注意：它故意不是 async）。
-
-    步骤：
-        1) ``reader = PdfReader(str(path))``
-           —— pypdf 收路径字符串，不是 Path 对象。
-
-        2) 逐页取文字并拼接：
-
-               pages = []
-               for page in reader.pages:
-                   pages.append(page.extract_text() or "")
-               text = "\\n\\n".join(pages)
-
-           ``or ""`` 兜底是必须的：整页是图片（扫描件）时
-           ``extract_text()`` 返回 None，不兜底的话后面拼接直接 TypeError。
-           用 "\\n\\n" 连接是为了保留页边界，M3 切分时用得上。
-
-        3) 返回 ``(text, len(reader.pages))``
-
-    为什么要拆成独立函数：
-      pypdf 是纯同步的阻塞库。统一套路是「同步内核 + 异步外壳」：
-      内核干真正的活（这里），外壳只负责把它丢进线程池（下面的 parse）。
-      这样内核 100% 可测、可复用，也不掺任何 asyncio 概念。
-    """
+    """同步地把 PDF 每页文字抽出来，返回 (全文, 页数)。"""
     reader = PdfReader(str(path))
 
     # 逐页提取文字并拼接
@@ -67,45 +42,10 @@ class PdfParser:
     extensions: tuple[str, ...] = (".pdf",)
 
     async def parse(self, path: Path) -> Document:
-        """TODO(你)：四步。
+        """解析 .pdf 文件。底层异常统一翻译成 ParseError。
 
-        1) 调用内核并做异常翻译：
-
-               try:
-                   text, page_count = await run_blocking(_extract_pdf_text, path)
-               except Exception as exc:
-                   raise ParseError(f"解析 PDF 失败: {exc}", source=str(path)) from exc
-
-           为什么敢用宽泛的 ``except Exception``：这是**库的边界**。
-           pypdf 会抛 PdfReadError / PdfStreamError 等一堆自有异常，
-           我们不能指望用户 import pypdf 来 except。所以在边界一次性
-           「翻译」成 ragkit 的 ParseError。
-           （KeyboardInterrupt / SystemExit 继承自 BaseException，不会被捕获。）
-
-        2) 拦扫描件：
-
-               if not text.strip():
-                   raise ParseError(
-                       "PDF 里没有抽出任何文字，可能是扫描件（需要 OCR 才能用）",
-                       source=str(path),
-                   )
-
-           这一步很值钱。扫描版 PDF 抽出来就是空字符串，如果不在这里拦住，
-           它会一路走到切分层切出一堆空 chunk，最后在 Milvus 里才暴露 ——
-           那时你面对的是几万条空记录，排查成本高得多。
-           **在入口处拒绝坏数据，比在下游到处防它便宜得多。**
-
-        3) 组装 metadata，比 TextParser 多两个字段：
-
-               {
-                   "path": str(path),
-                   "suffix": ".pdf",
-                   "size_bytes": path.stat().st_size,
-                   "page_count": page_count,
-                   "char_count": len(text),
-               }
-
-        4) 返回 Document(...)，doc_id 用 ``stable_id(str(path), text)``。
+        扫描件（整页是图片）抽不出文字，会显式报错而不是产出空 chunk ——
+        放它过去的话，最后会在向量库里堆一批空记录，排查成本高得多。
         """
 
         try:

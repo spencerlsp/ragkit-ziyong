@@ -38,15 +38,6 @@ def stable_id(*parts: str, length: int = 16) -> str:
            同一段中文在别的机器上算出来的 ID 就不一样了（跨机器就不幂等了）。
         4) 返回前 ``length`` 个字符（切片 ``[:length]``）。
 
-    TODO(你)：把上面第 1~4 步翻译成代码，然后删掉最后那行 raise。
-
-    写完自测（粘到 ``uv run python`` 里跑，或直接跑 tests/test_utils.py）：
-        >>> stable_id("a.txt", "hello") == stable_id("a.txt", "hello")
-        True
-        >>> stable_id("ab", "c") != stable_id("a", "bc")
-        True
-        >>> len(stable_id("x", length=8))
-        8
     """
     if length <= 0:
         raise ValueError("length 必须为正数")
