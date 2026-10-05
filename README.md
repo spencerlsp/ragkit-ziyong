@@ -29,6 +29,7 @@
 - [API 一览](#api-一览)
 - [配置参考](#配置参考)
 - [跑一遍完整示例](#跑一遍完整示例)
+- [命令行（CLI）](#命令行cli)
 - [作为 MCP 服务端给 agent 用](#作为-mcp-服务端给-agent-用)
 - [评估结果](#评估结果)
 - [常见坑速查](#常见坑速查)
@@ -439,8 +440,8 @@ from ragkit import EvalSample, evaluate, load_dataset
 samples = load_dataset("data/eval.jsonl")
 
 async with Ragkit() as rag:
-    dense = await evaluate(samples, rag._retriever, k=3, mode="dense")
-    hybrid = await evaluate(samples, rag._retriever, k=3, mode="hybrid")
+    dense = await evaluate(samples, rag.retriever, k=3, mode="dense")
+    hybrid = await evaluate(samples, rag.retriever, k=3, mode="hybrid")
 
 print(dense.summary())
 print(hybrid.summary())
@@ -657,6 +658,56 @@ uv run python scripts/ingest_demo.py examples/sample_doc.md --query "报销多�
 # 评估：稠密 / 混合 /（--rerank）三路对比，带分组指标
 uv run python scripts/eval_demo.py examples/sample_doc.md --rerank
 ```
+
+---
+
+## 命令行（CLI）
+
+```
+uv run ragkit --help
+```
+
+| 命令 | 用途 | 碰数据库 |
+|---|---|---|
+| `ragkit parse <paths...>` | 只看解析结果和字数 | 否 |
+| `ragkit split <path> [--out f.jsonl]` | 切分并导出，肉眼检查切得好不好 | 否 |
+| `ragkit ingest <paths...> [--reset] [--no-flush]` | 入库 | 是 |
+| `ragkit query <text> [-k N] [--mode] [--rerank]` | 终端里手动检索验证 | 是 |
+| `ragkit count` / `delete <doc_id...>` / `drop [--yes]` | 运维 | 是 |
+| `ragkit eval <dataset.jsonl>` | 跑评估 | 是 |
+| `ragkit mcp` | 起 MCP 服务端 | 是 |
+
+**分工原则：写的走 CLI，读的走 MCP。** 入库、切分、评估由人显式触发；
+检索作为只读工具给 agent 随时调用。但 `query` **仍然留在 CLI** ——
+调试时要能脱离 agent 手动跑一次：「模型说搜不到」的时候，
+第一件事是自己在终端敲一遍，看是检索真的坏了，还是模型用错了。
+
+```bash
+# 调切分参数：切完导出看一眼（完全离线，不需要 Milvus 和 API key）
+uv run ragkit split docs/手册.md --chunk-size 350 --chunk-overlap 50 --out chunks.jsonl
+Get-Content chunks.jsonl | Select-Object -First 3
+
+# 入库（改过 schema 时必须加 --reset）
+uv run ragkit ingest docs/ --reset
+
+# 手动验证检索：稠密 vs 混合 vs 混合+重排
+uv run ragkit query "住宿费上限" -k 3
+uv run ragkit query "住宿费上限" -k 3 --mode hybrid --rerank
+
+# 评估
+uv run ragkit eval data/eval.jsonl --mode hybrid -k 3
+```
+
+**`--json`**：所有命令都支持，给脚本用。
+
+```bash
+uv run ragkit count --json
+uv run ragkit query "问题" --json | ConvertFrom-Json
+```
+
+**退出码**：`0` 成功、`1` 业务失败（`RagkitError`）、`2` 参数错误。
+别小看这个区分 —— 很多 CLI 一律 `exit 1`，脚本里就分不清
+「参数写错了」和「检索失败了」。
 
 ---
 

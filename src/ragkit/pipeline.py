@@ -110,6 +110,16 @@ class Ragkit:
     async def __aexit__(self, *exc_info: object) -> None:
         await self.aclose()
 
+    @property
+    def retriever(self) -> Retriever:
+        """门面内部的检索器。
+
+        暴露出来是为了让**需要单独使用检索能力**的地方（评估、脚本、CLI）
+        不必去摸 ``_retriever`` 这个私有属性 —— 摸私有属性的代码，
+        重构一次就断一次。
+        """
+        return self._retriever
+
     async def aclose(self) -> None:
         """只关自己创建的组件。"""
         if self._owns_embedder:
