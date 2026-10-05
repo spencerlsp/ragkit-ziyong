@@ -15,6 +15,7 @@ from collections.abc import Sequence
 
 from ..embedding import Embedder, create_embedder, embed_all
 from ..schemas import Chunk
+from .base import VectorStore
 from .milvus import MilvusIndexer
 
 __all__ = ["ingest_chunks"]
@@ -24,7 +25,7 @@ async def ingest_chunks(
     chunks: Sequence[Chunk],
     *,
     embedder: Embedder | None = None,
-    indexer: MilvusIndexer | None = None,
+    indexer: VectorStore | None = None,
     batch_size: int | None = None,
     replace_documents: bool = True,
     flush: bool = True,

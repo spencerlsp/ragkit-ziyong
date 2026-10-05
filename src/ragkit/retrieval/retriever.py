@@ -19,7 +19,7 @@ from typing import Literal
 from ..config import Settings, get_settings
 from ..embedding import Embedder, create_embedder
 from ..errors import RetrievalError
-from ..indexing import MilvusIndexer
+from ..indexing import MilvusIndexer, VectorStore
 from ..indexing.schema import DOC_ID_FIELD
 from ..schemas import ScoredChunk
 from .reranker import Reranker
@@ -57,7 +57,7 @@ class Retriever:
         self,
         *,
         embedder: Embedder | None = None,
-        indexer: MilvusIndexer | None = None,
+        indexer: VectorStore | None = None,
         reranker: Reranker | None = None,
         settings: Settings | None = None,
     ) -> None:

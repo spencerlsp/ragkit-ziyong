@@ -9,11 +9,13 @@
 
 from __future__ import annotations
 
+from .base import VectorStore
 from .ingest import ingest_chunks
 from .milvus import MilvusIndexer
 from .schema import build_index_params, build_schema
 
 __all__ = [
+    "VectorStore",
     "MilvusIndexer",
     "ingest_chunks",
     "build_schema",
