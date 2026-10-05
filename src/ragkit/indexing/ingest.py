@@ -27,6 +27,7 @@ async def ingest_chunks(
     indexer: MilvusIndexer | None = None,
     batch_size: int | None = None,
     replace_documents: bool = True,
+    flush: bool = True,
 ) -> int:
     """把 chunk 向量化并写进 Milvus，返回写入条数。
 
@@ -105,8 +106,17 @@ async def ingest_chunks(
         texts = [chunk.text for chunk in chunks]
         vectors = await embed_all(embedder, texts, batch_size=batch_size)
 
-        # 将chunks+向量写入Milvus，返回写入数量
-        return await indexer.upsert_chunks(chunks, vectors)
+        written = await indexer.upsert_chunks(chunks, vectors)
+
+        # 写入后 flush 一次，保证「写完立刻能查到」。
+        #
+        # 不加这一步，紧接着的检索很可能返回 0 条，而且**不报错** ——
+        # Milvus 是最终一致性的，新数据要先落盘才保证可见。
+        # （代价是写入变慢一点。持续大批量导入时应该关掉它，
+        #   等全部写完之后统一 flush 一次，否则会产出大量小 segment，反而拖慢查询。）
+        if flush:
+            await indexer.flush()
+        return written
 
     finally:
         # 资源释放：只关闭本函数自己创建的实例，外部传入的交给调用方管理

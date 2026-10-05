@@ -320,6 +320,30 @@ class MilvusIndexer:
 
         return len(chunks)
 
+    async def flush(self) -> None:
+        """把内存里的数据落盘，让它们**立刻**能被检索到。
+
+        为什么需要它 —— 这是端到端实跑才暴露出来的问题：
+        ``upsert`` 报告写了 4 条，紧接着 ``search`` 返回 0 条，而且**不报任何错**。
+
+        原因是 Milvus 的**最终一致性**：新写入的数据先进「增长中段」
+        (growing segment)，检索默认不保证立刻看得见它。
+        第一次跑 demo 时碰巧赶上了（查到了 2 条），第二次就没赶上 ——
+        这种「时好时坏」比稳定失败更难查。
+
+        要立刻可见有两条路：
+          * 读的时候指定强一致性（``consistency_level="Strong"``），
+            每次查询都要等服务端确认最新状态，延迟明显变高；
+          * 写完之后 ``flush`` 一次，把增长段封存并建索引。
+
+        我们选后者：**代价集中在写入侧一次，而不是让每一次查询都变慢。**
+        这也符合 RAG 的访问模式 —— 写入是批量的、偶发的，查询是频繁的。
+        """
+        try:
+            await self._client.flush(self._collection)
+        except MilvusException as exc:
+            raise IndexingError(f"flush 失败: {exc}", source=self._collection) from exc
+
     async def delete_document(self, doc_id: str) -> int:
         """按 doc_id 删掉这个文档的所有 chunk，返回删除条数。
 
@@ -458,15 +482,23 @@ class MilvusIndexer:
                hits = await self._client.search(
                    collection_name=self._collection,
                    data=[list(query_vector)],
+                   anns_field=VECTOR_FIELD,
                    filter=filter_expr,
                    limit=top_k,
                    output_fields=list(_SEARCH_OUTPUT_FIELDS),
                )
 
-           两个细节：
+           三个细节：
              * ``data=[list(query_vector)]`` —— Milvus 支持一次查多个向量，
                所以接口收的是「一批查询向量」。我们只查一个也要包一层。
                返回值同理是 ``List[List[dict]]``，真正的命中在 ``hits[0]``。
+             * **必须显式传 ``anns_field=VECTOR_FIELD``。**
+               这是加了 BM25 之后才暴露出来的问题：collection 里现在有
+               **两个**向量字段（稠密 embedding + 稀疏 sparse），
+               不指定的话服务端不知道你要搜哪个，直接报
+               ``multiple anns_fields exist, please specify a anns_field``。
+               —— 这正是端到端实跑的价值：165 条离线测试一条都发现不了它，
+               因为假客户端不校验这个参数。
              * **不传 search_params**。索引是用 COSINE 建的，服务端默认就用它；
                显式传一个和索引不一致的 metric_type 反而会报错。
                这也说明「度量方式」是**建索引那一刻定下的全局约定**，
@@ -519,6 +551,7 @@ class MilvusIndexer:
             hits = await self._client.search(
                 collection_name=self._collection,
                 data=[list(query_vector)],
+                anns_field=VECTOR_FIELD,
                 filter=filter_expr,
                 limit=top_k,
                 output_fields=list(_SEARCH_OUTPUT_FIELDS),

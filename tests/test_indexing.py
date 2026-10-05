@@ -157,6 +157,11 @@ class FakeMilvusClient:
         self.rows.extend(data)
         return {"upsert_count": len(data)}
 
+    async def flush(self, collection_name: str, **kwargs: Any) -> None:
+        self._record("flush", {"collection_name": collection_name})
+        await asyncio.sleep(0)
+        self._maybe_fail("flush")
+
     async def delete(self, collection_name: str, filter: str = "", **kwargs: Any) -> dict[str, int]:
         self._record("delete", {"collection_name": collection_name, "filter": filter})
         await asyncio.sleep(0)
@@ -567,6 +572,37 @@ async def test_ingest_can_skip_delete() -> None:
     )
 
     assert "delete" not in client.names()
+
+
+async def test_ingest_flushes_by_default() -> None:
+    """入库结束必须 flush —— 否则「写完立刻查」可能返回 0 条。
+
+    这不是假想：第一次端到端实跑就撞上了这个 ——
+    upsert 报告写了 4 条，紧接着 search 返回 0 条，而且**不报任何错**。
+    Milvus 是最终一致性的，新数据要先落盘才保证可见。
+
+    ⚠️ 假客户端不会替你暴露这个问题（它不模拟一致性延迟），
+    所以只能把「flush 调了没有」写成断言来守住。
+    """
+    client = FakeMilvusClient()
+    indexer = MilvusIndexer(make_settings(), client=client)
+
+    await ingest_chunks([make_chunk("a")], embedder=StubEmbedder(), indexer=indexer)
+
+    assert "flush" in client.names()
+
+
+async def test_ingest_can_skip_flush() -> None:
+    """持续大批量导入时应该关掉 flush，等全部写完之后统一刷一次。
+
+    每次小批量都 flush 会产出大量小 segment，反而拖慢查询。
+    """
+    client = FakeMilvusClient()
+    indexer = MilvusIndexer(make_settings(), client=client)
+
+    await ingest_chunks([make_chunk("a")], embedder=StubEmbedder(), indexer=indexer, flush=False)
+
+    assert "flush" not in client.names()
 
 
 # ---------------------------------------------------------------------------
