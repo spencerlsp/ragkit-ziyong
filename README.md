@@ -432,6 +432,23 @@ JSONL 格式，一行一条：
 > 怎么拿到 `chunk_id`？先切分，然后 `chunks[0].chunk_id`。
 > 或者用 `scripts/eval_demo.py` 的自动标注方式先跑通流程。
 
+仓库里有一份标好的样板：[`examples/eval_sample.jsonl`](examples/eval_sample.jsonl)
+（11 个问题，对应 `examples/sample_doc.md`，按**默认切分参数**标注）。
+
+```bash
+uv run ragkit ingest examples/sample_doc.md        # 用默认切分参数，别加 --chunk-size
+uv run ragkit eval examples/eval_sample.jsonl -k 3
+```
+
+> ⚠️ **`relevant_ids` 里的 chunk_id 绑定在切分参数上。** 改了 `CHUNK_SIZE` / `CHUNK_OVERLAP`，
+> chunk_id 全变，标注立刻失效 —— 指标会恒为 0，而且**不报任何错**。
+> 这就是为什么真实项目里**评估集要和切分策略一起版本化**。
+>
+> 这份样板对应的是默认的 800/120，所以 2825 字的示例文档只切成 **4 块** ——
+> 粒度太粗，top-3 几乎必然命中，指标没有区分度。它的定位是**格式示例 + 验证管道通不通**。
+> 想看真实效果，把 `CHUNK_SIZE` 调小（比如 350）重新切分，再用
+> `uv run python scripts/eval_demo.py examples/sample_doc.md --rerank` 重新标注并对比。
+
 #### 2. 跑评估
 
 ```python
