@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     # ---- Milvus ----
     milvus_uri: str = "http://localhost:19530"
     milvus_token: str = ""
+    milvus_db: str = ""  # 空 = 用 Milvus 的 default 库；库必须先存在，Milvus 不会自动建
     milvus_collection: str = "ragkit_chunks"
     milvus_batch_size: int = 500  # 一次 upsert 多少条
 

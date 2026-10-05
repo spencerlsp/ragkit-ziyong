@@ -606,6 +606,32 @@ async def test_ingest_can_skip_flush() -> None:
 
 
 # ---------------------------------------------------------------------------
+# milvus_db 透传
+# ---------------------------------------------------------------------------
+
+
+async def test_milvus_client_receives_db_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    """配置里的 milvus_db 必须传给客户端，否则数据全落到 default 库。
+
+    真客户端是惰性的（构造时不连网），所以 monkeypatch 掉它来观察构造参数。
+    """
+    seen: dict[str, object] = {}
+
+    class Recorder:
+        def __init__(self, **kwargs: object) -> None:
+            seen.update(kwargs)
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr("ragkit.indexing.milvus.AsyncMilvusClient", Recorder)
+
+    MilvusIndexer(make_settings(milvus_db="ragkit"))
+
+    assert seen["db_name"] == "ragkit"
+
+
+# ---------------------------------------------------------------------------
 # 集成测试：需要真 Milvus，默认跳过
 # ---------------------------------------------------------------------------
 

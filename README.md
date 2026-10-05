@@ -616,6 +616,7 @@ Ragkit(settings=None, *, embedder=None, indexer=None, reranker=None, splitter=No
 |---|---|---|
 | `MILVUS_URI` | `http://localhost:19530` | |
 | `MILVUS_TOKEN` | 空 | Zilliz Cloud 需要 |
+| `MILVUS_DB` | 空（= default 库） | ⚠️ 库必须**先手动建好**，Milvus 不会自动创建；换库不会迁移已有数据 |
 | `MILVUS_COLLECTION` | `ragkit_chunks` | |
 | `MILVUS_BATCH_SIZE` | `500` | 单次 upsert 多少条 |
 | `CHUNK_SIZE` | `800` | 每个 chunk 的目标字符数 |

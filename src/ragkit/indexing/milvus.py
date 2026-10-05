@@ -61,6 +61,7 @@ class MilvusIndexer:
         self._client = client or AsyncMilvusClient(
             uri=self._s.milvus_uri,
             token=self._s.milvus_token,
+            db_name=self._s.milvus_db,
             timeout=self._s.request_timeout,
         )
 
