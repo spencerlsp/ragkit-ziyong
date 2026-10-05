@@ -47,6 +47,7 @@ async def test_ingest_reports_files_chunks_written(tmp_path: Path) -> None:
     assert result.files == 2
     assert result.chunks >= 2
     assert result.written == result.chunks
+    assert len(result.doc_ids) == 2
     assert len(store.stored) == result.chunks
 
 
@@ -206,6 +207,25 @@ async def test_count_and_drop() -> None:
         await rag.aclose()
 
     assert "drop" in store.calls
+
+
+async def test_ingest_returns_doc_ids_that_can_delete(tmp_path: Path) -> None:
+    """ingest 返回的 doc_ids 必须是**能直接拿去删**的凭据。
+
+    这条把两个 API 串起来验证：如果 ingest 返回的 id 和
+    delete_document 用的 id 对不上，用户就只能自己去算哈希了。
+    """
+    a = write(tmp_path, "a.md", "一些内容")
+    rag, _, store, _ = build()
+    try:
+        result = await rag.ingest([a])
+        assert result.doc_ids
+        await rag.delete_document(result.doc_ids[0])
+    finally:
+        await rag.aclose()
+
+    # 入库时按 doc_id 删过一次，手动删的时候又删了同一个
+    assert store.deleted[-1] == result.doc_ids[0]
 
 
 async def test_aclose_does_not_close_injected_components() -> None:

@@ -29,7 +29,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .config import Settings, get_settings
 from .embedding import Embedder, create_embedder
@@ -58,6 +58,9 @@ class IngestResult(BaseModel):
     files: int
     chunks: int
     written: int
+    # 入库的文档 ID。为什么要返回它：**这是你之后删除这批数据的唯一凭据**。
+    # 不给的话，用户想删掉刚导进去的那篇文档，只能自己去算 stable_id(path, text)。
+    doc_ids: list[str] = Field(default_factory=list)
 
 
 class Ragkit:
@@ -165,7 +168,28 @@ class Ragkit:
         written = await ingest_chunks(
             chunks, embedder=self._embedder, indexer=self._indexer, flush=flush
         )
-        return IngestResult(files=len(documents), chunks=len(chunks), written=written)
+        return IngestResult(
+            files=len(documents),
+            chunks=len(chunks),
+            written=written,
+            doc_ids=[document.doc_id for document in documents],
+        )
+
+    async def delete_document(self, doc_id: str) -> int:
+        """删掉某个文档的所有 chunk，返回删除条数。
+
+        ``doc_id`` 从 :meth:`ingest` 的返回值里拿：
+
+            result = await rag.ingest(["docs/手册.md"])
+            await rag.delete_document(result.doc_ids[0])
+
+        ⚠️ **doc_id 是「路径 + 内容」的哈希**（见 ``utils.stable_id``），
+        所以文件内容一变，doc_id 就变了。这意味着：
+        「改了文件之后想删掉旧数据」不能靠重新解析这个文件 ——
+        新解析出来的 id 和入库时的那个对不上。
+        正确做法是保留 ingest 返回的 doc_ids，或者直接整表重建（``drop()`` + 重新 ``ingest()``）。
+        """
+        return await self._indexer.delete_document(doc_id)
 
     async def query(
         self,
