@@ -15,7 +15,6 @@ import pytest
 from pymilvus import MilvusException, RRFRanker
 
 from ragkit.config import Settings
-from ragkit.embedding.openai_compat import OpenAICompatEmbedder
 from ragkit.errors import RetrievalError
 from ragkit.indexing import MilvusIndexer
 from ragkit.indexing.schema import SPARSE_FIELD, VECTOR_FIELD
@@ -104,6 +103,7 @@ class FakeMilvusClient:
         self,
         collection_name: str,
         data: Any = None,
+        anns_field: str | None = None,
         filter: str = "",
         limit: int = 10,
         output_fields: list[str] | None = None,
@@ -114,6 +114,7 @@ class FakeMilvusClient:
             {
                 "collection_name": collection_name,
                 "data": data,
+                "anns_field": anns_field,
                 "filter": filter,
                 "limit": limit,
                 "output_fields": output_fields,
@@ -170,6 +171,30 @@ class StubEmbedder:
         self.closed = True
 
 
+class StubReranker:
+    """假重排器：把候选**倒过来**，并记录收到了多少条候选。
+
+    用「倒过来」而不是写死顺序，是因为候选数量会随参数变化 ——
+    倒序在任何长度下都是确定的，好断言。
+    """
+
+    def __init__(self) -> None:
+        self.seen: list[list[str]] = []
+        self.closed = False
+
+    async def rerank(
+        self, query: str, texts: Sequence[str], *, top_n: int | None = None
+    ) -> list[tuple[int, float]]:
+        self.seen.append(list(texts))
+        # 分数随下标递增，所以排序后就是倒序
+        pairs = [(index, float(index)) for index in range(len(texts))]
+        pairs.sort(key=lambda pair: pair[1], reverse=True)
+        return pairs[:top_n] if top_n is not None else pairs
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
 def make_indexer(client: FakeMilvusClient, **overrides: object) -> MilvusIndexer:
     return MilvusIndexer(make_settings(**overrides), client=client)
 
@@ -219,6 +244,27 @@ async def test_search_does_not_request_vector_field() -> None:
     await indexer.search([0.0] * 4)
 
     assert VECTOR_FIELD not in client.payload_for("search")["output_fields"]
+
+
+async def test_search_specifies_anns_field() -> None:
+    """稠密检索必须**显式**说明搜哪个向量字段。
+
+    这条是端到端实跑抓出来的：加了 BM25 稀疏字段之后，
+    collection 里有了两个向量字段（embedding 和 sparse），
+    不指定 anns_field 的话服务端会直接报
+    ``multiple anns_fields exist, please specify a anns_field in search_params``。
+
+    ⚠️ 关键在于**假客户端不会替你校验这个**：
+    之前 165 条离线测试全绿，真库上却直接失败。
+    所以必须把「参数传了没有」显式断言出来 ——
+    这是 mock 唯一守不住、只能靠「把契约写成断言」来补的那类东西。
+    """
+    client = FakeMilvusClient([[]])
+    indexer = make_indexer(client)
+
+    await indexer.search([0.0] * 4)
+
+    assert client.payload_for("search")["anns_field"] == VECTOR_FIELD
 
 
 async def test_search_rejects_dim_mismatch() -> None:
@@ -504,7 +550,9 @@ async def test_retrieve_keeps_injected_components_open() -> None:
     assert not client.closed
 
 
-async def test_retriever_closes_owned_components() -> None:
+async def test_retriever_closes_owned_components(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """自己创建的组件必须被**真正**关掉，而不是「造了个协程就丢掉」。
 
     这条专门抓「写了 ``aclose()`` 但忘了 ``await``」：
@@ -517,19 +565,23 @@ async def test_retriever_closes_owned_components() -> None:
     **「没被走到的分支等于没写」** —— 每个 if 分支都该有测试碰到它，
     尤其是「资源清理」这种平时看不见效果的分支。
 
-    这里只注入 indexer（避免真连 Milvus），让 embedder 由 Retriever 自建，
-    这样 owned 分支才会被执行。
+    这里用 monkeypatch 把 ``create_embedder`` 换成替身，而不是去读
+    ``retriever._embedder._http._client.is_closed``。两个理由：
+
+      1) 读私有属性要穿透两层，**重构一次就断一次** ——
+         后来把 HTTP 层抽成 JsonClient 时，这条测试就是这么断的；
+      2) 我们真正想验证的是「aclose 被 await 了」，
+         而不是「某个具体的 httpx 客户端被关了」。
+         替身能记录前者，而且和实施细节解耦。
     """
+    stub = StubEmbedder()
+    monkeypatch.setattr("ragkit.retrieval.retriever.create_embedder", lambda settings=None: stub)
     indexer = MilvusIndexer(make_settings(), client=FakeMilvusClient())
     retriever = Retriever(indexer=indexer, settings=make_settings())
 
-    assert isinstance(retriever._embedder, OpenAICompatEmbedder)
-    embedder_client = retriever._embedder._client
-    assert not embedder_client.is_closed
-
     await retriever.aclose()
 
-    assert embedder_client.is_closed
+    assert stub.closed
 
 
 async def test_retriever_passes_settings_to_created_components() -> None:
@@ -613,6 +665,111 @@ async def test_retrieve_rejects_unknown_mode() -> None:
         await retriever.retrieve("你好", mode="bm25")  # type: ignore[arg-type]
 
     assert client.calls == []
+
+
+async def test_retrieve_rerank_requires_a_reranker() -> None:
+    """开了 rerank 却没给重排器时要报错，而不是默默跳过重排。
+
+    「默默跳过」是最坏的选择：用户以为自己开了重排，
+    指标却一点没动，然后花半天怀疑模型不行。
+    """
+    client = FakeMilvusClient([[]])
+    retriever = Retriever(
+        embedder=StubEmbedder(),
+        indexer=make_indexer(client),
+        settings=make_settings(),
+    )
+
+    with pytest.raises(RetrievalError):
+        await retriever.retrieve("你好", rerank=True)
+
+    assert client.calls == []
+
+
+async def test_retrieve_rerank_fetches_larger_candidate_pool() -> None:
+    """重排前必须多召回一批候选，否则重排只能在 k 条里换顺序。
+
+    k=3 时默认候选池是 max(3*4, 20) = 20。
+    """
+    hits = [[make_hit(f"c{i}", 0.9 - i * 0.01) for i in range(20)]]
+    client = FakeMilvusClient(hits)
+    stub = StubReranker()
+    retriever = Retriever(
+        embedder=StubEmbedder(),
+        indexer=make_indexer(client),
+        reranker=stub,
+        settings=make_settings(),
+    )
+
+    result = await retriever.retrieve("你好", top_k=3, rerank=True)
+
+    # 召回阶段要了 20 条
+    assert client.payload_for("search")["limit"] == 20
+    # 重排器收到的也是 20 条候选
+    assert len(stub.seen[0]) == 20
+    # 最终只返回 3 条
+    assert len(result) == 3
+
+
+async def test_retrieve_rerank_reorders_candidates() -> None:
+    """重排器倒序之后，返回顺序也要跟着倒过来。"""
+    hits = [[make_hit("c0", 0.9), make_hit("c1", 0.8), make_hit("c2", 0.7)]]
+    client = FakeMilvusClient(hits)
+    retriever = Retriever(
+        embedder=StubEmbedder(),
+        indexer=make_indexer(client),
+        reranker=StubReranker(),
+        settings=make_settings(),
+    )
+
+    result = await retriever.retrieve("你好", top_k=3, rerank=True, rerank_candidates=3)
+
+    assert [hit.chunk.chunk_id for hit in result] == ["c2", "c1", "c0"]
+
+
+async def test_retrieve_rerank_replaces_scores() -> None:
+    """重排之后 score 必须换成重排分，不能还是余弦相似度。
+
+    忘了换的话，后面的阈值过滤和排序展示全部基于错的量纲 ——
+    而且不会有任何报错。
+    """
+    hits = [[make_hit("c0", 0.99), make_hit("c1", 0.98)]]
+    client = FakeMilvusClient(hits)
+    retriever = Retriever(
+        embedder=StubEmbedder(),
+        indexer=make_indexer(client),
+        reranker=StubReranker(),
+        settings=make_settings(),
+    )
+
+    result = await retriever.retrieve("你好", top_k=2, rerank=True, rerank_candidates=2)
+
+    # 假重排器给的分数是 [1.0, 0.0]，不是原来的 [0.99, 0.98]
+    assert [hit.score for hit in result] == [1.0, 0.0]
+
+
+async def test_retrieve_hybrid_with_rerank_allows_threshold() -> None:
+    """混合模式 + 重排时，阈值重新变得有意义（分数被换成 0~1 的重排分）。"""
+    hits = [[make_hit("c0", 0.9), make_hit("c1", 0.8)]]
+    client = FakeMilvusClient(hits)
+    retriever = Retriever(
+        embedder=StubEmbedder(),
+        indexer=make_indexer(client),
+        reranker=StubReranker(),
+        settings=make_settings(),
+    )
+
+    result = await retriever.retrieve(
+        "你好",
+        top_k=2,
+        mode="hybrid",
+        rerank=True,
+        rerank_candidates=2,
+        score_threshold=0.5,
+    )
+
+    # 重排分是 [1.0, 0.0]，阈值 0.5 只留下第一条
+    assert len(result) == 1
 
 
 def test_doc_filter_is_exported() -> None:

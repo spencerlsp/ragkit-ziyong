@@ -38,7 +38,7 @@ from .evaluation import EvalReport, EvalSample, evaluate, load_dataset
 from .indexing import MilvusIndexer, build_schema, ingest_chunks
 from .parsing import parse_file, parse_files
 from .processing import clean_document, normalize_whitespace
-from .retrieval import Retriever, doc_filter
+from .retrieval import HttpReranker, Reranker, Retriever, create_reranker, doc_filter
 from .schemas import Chunk, Document, RAGResult, ScoredChunk
 from .splitting import (
     FixedSplitter,
@@ -74,6 +74,9 @@ __all__ = [
     "build_schema",
     "Retriever",
     "doc_filter",
+    "Reranker",
+    "HttpReranker",
+    "create_reranker",
     "evaluate",
     "EvalSample",
     "EvalReport",

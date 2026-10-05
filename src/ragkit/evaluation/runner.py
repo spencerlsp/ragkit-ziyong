@@ -88,6 +88,7 @@ async def evaluate(
     *,
     k: int = 5,
     mode: Literal["dense", "hybrid"] = "dense",
+    rerank: bool = False,
     match_on: Literal["chunk_id", "doc_id"] = "chunk_id",
     max_concurrency: int = 8,
 ) -> EvalReport:
@@ -193,7 +194,7 @@ async def evaluate(
     async def one(sample: EvalSample) -> SampleResult:
         async with sem:
             # 真正打数据库/检索，放在闸门内
-            hits = await retriever.retrieve(sample.question, top_k=k, mode=mode)
+            hits = await retriever.retrieve(sample.question, top_k=k, mode=mode, rerank=rerank)
         # 指标计算：纯CPU计算，不在sem内
         ids = [_extract_id(hit, match_on) for hit in hits]
         return SampleResult(

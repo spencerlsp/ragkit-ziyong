@@ -13,6 +13,13 @@
 
 from __future__ import annotations
 
+from .reranker import HttpReranker, Reranker, create_reranker
 from .retriever import Retriever, doc_filter
 
-__all__ = ["Retriever", "doc_filter"]
+__all__ = [
+    "Retriever",
+    "doc_filter",
+    "Reranker",
+    "HttpReranker",
+    "create_reranker",
+]

@@ -395,6 +395,25 @@ async def test_evaluate_passes_mode_to_retriever() -> None:
     assert "hybrid_search" in client.names()
 
 
+async def test_evaluate_passes_rerank_to_retriever() -> None:
+    """rerank=True 也要一路传到 retriever。
+
+    这里的 retriever **没有配重排器**，所以它会拒绝这次调用 ——
+    而拒绝本身就证明了参数传到了。（如果 evaluate 把 rerank 吞掉了，
+    这条会「成功」，n_failed 就是 0 了。）
+
+    用「预期的失败」当证据，比再造一个重排器替身更省事，
+    而且它测的是同一条契约。
+    """
+    client = FakeMilvusClient([[make_hit("c1", 0.9)]])
+    samples = [EvalSample(question="q", relevant_ids=["c1"])]
+
+    report = await evaluate(samples, make_retriever(client), k=1, rerank=True)
+
+    assert report.n_failed == 1
+    assert "rerank" in report.failures[0].error
+
+
 async def test_evaluate_matches_on_doc_id() -> None:
     """标注只有文档级时，可以按 doc_id 比对。"""
     client = FakeMilvusClient([[make_hit("c1", 0.9, doc_id="doc-x")]])

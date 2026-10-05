@@ -97,6 +97,15 @@ class Settings(BaseSettings):
     openai_embedding_dim: int = 1024  # BAAI/bge-m3 的向量维度；M5 建 Milvus collection 要用
     openai_embedding_batch_size: int = 32  # 一次请求塞多少条文本（服务端一般有上限）
 
+    # ---- 重排（rerank）----
+    #
+    # 单独一组配置，不复用 openai_embedding_* —— 因为 rerank **不是**
+    # OpenAI 兼容协议的一部分（OpenAI 至今没有 rerank 端点）。
+    # 它更像各家厂商的「方言」：字段名、返回结构都可能有差异。
+    rerank_base_url: str = "https://api.siliconflow.cn/v1"
+    rerank_api_key: SecretStr = SecretStr("")
+    rerank_model: str = "BAAI/bge-reranker-v2-m3"
+
     # ---- Milvus ----
     milvus_uri: str = "http://localhost:19530"
     milvus_token: str = ""
