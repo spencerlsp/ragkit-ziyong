@@ -30,6 +30,13 @@
 - [配置参考](#配置参考)
 - [跑一遍完整示例](#跑一遍完整示例)
 - [命令行（CLI）](#命令行cli)
+  - [命令总览](#命令总览)
+  - [通用约定](#通用约定)
+  - [命令详解](#命令详解)
+  - [切分与检索的开关](#切分与检索的开关)
+  - [参数一致性](#参数一致性)
+  - [四组对照实验](#四组对照实验)
+  - [排查手册](#排查手册)
 - [作为 MCP 服务端给 agent 用](#作为-mcp-服务端给-agent-用)
 - [评估结果](#评估结果)
 - [常见坑速查](#常见坑速查)
@@ -45,7 +52,7 @@
 |---|---|
 | **多格式解析** | `.txt` / `.md` / `.pdf` / `.docx`，解析器可注册扩展 |
 | **异步优先** | 解析 / 向量化 / 写入 / 检索全程异步，带限流、超时、指数退避重试 |
-| **递归切分** | 按语义层级切（段落 → 换行 → 句号 → 字符），保证 `"".join(pieces) == 原文` |
+| **切分策略可选** | 递归切分（段落 → 换行 → 句号 → 字符）/ 按 Markdown 标题分节（工程文档）；保证 `"".join(pieces) == 原文` |
 | **混合检索** | 稠密向量 + BM25 关键词，RRF 融合 —— 专治「PIP」「E-204」这类稀有关键词 |
 | **重排（Rerank）** | 两阶段检索：召回 20~50 条候选 → cross-encoder 精排取 top-k |
 | **可评估** | HitRate / Recall / MRR / NDCG，支持**按问题分组**看指标、跑批容错 |
@@ -79,7 +86,7 @@ uv sync
 
 ```bash
 uv run python -c "import ragkit; print(ragkit.__all__)"
-uv run pytest -q          # 200 条测试，全部离线，不需要 Milvus 和 API key
+uv run pytest -q          # 281 条测试，全部离线，不需要 Milvus 和 API key
 ```
 
 ### 3. 配置
@@ -605,7 +612,8 @@ Ragkit(settings=None, *, embedder=None, indexer=None, reranker=None, splitter=No
 | 切分 | `split_document()` / `RecursiveSplitter` / `FixedSplitter` / `write_chunks_jsonl()` | **同步**；不变量 `"".join(pieces) == 原文` |
 | 向量化 | `create_embedder()` / `embed_all()` / `HashingEmbedder` | `Embedder` 协议；返回顺序严格对应输入 |
 | 索引 | `MilvusIndexer` / `ingest_chunks()` / `build_schema()` | 懒建表双检锁；写入后 flush |
-| 检索 | `Retriever` / `doc_filter()` | 分数方向见[查询](#查询) |
+| 检索 | `Retriever` / `doc_filter()` / `SectionAwareRetriever` | 分数方向见[查询](#查询) |
+| 策略 | `STRATEGIES` / `resolve_strategy()` / `describe_strategies()` | 给「哪一层 + 什么模式 + 要不要重排」的组合起名字，配置里按名字选用（见 [MCP 配置](#配置)） |
 | 重排 | `create_reranker()` / `HttpReranker` | 换 `score` 语义；候选池必须放大 |
 | 评估 | `evaluate()` / `load_dataset()` / `dump_dataset()` / `hit_rate()` … | 容错跑批；支持按 `metadata` 分组 |
 
@@ -619,6 +627,10 @@ Ragkit(settings=None, *, embedder=None, indexer=None, reranker=None, splitter=No
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
+| `OPENAI_CHAT_BASE_URL` | `https://api.deepseek.com` | 生成环节（LLM）用。**那一环还没实现**，这几个字段现在填不填都不影响 |
+| `OPENAI_CHAT_API_KEY` | — | |
+| `OPENAI_CHAT_MODEL` | `deepseek-flash` | ⚠️ 要填服务商**真实的**模型名（DeepSeek 官方是 `deepseek-chat`），否则调用时 404 |
+| `LLM_TEMPERATURE` | `0.0` | |
 | `OPENAI_EMBEDDING_BASE_URL` | `https://api.siliconflow.cn/v1` | 任何 OpenAI 兼容端点 |
 | `OPENAI_EMBEDDING_API_KEY` | — | 用 `SecretStr` 存，日志里显示成 `**********` |
 | `OPENAI_EMBEDDING_MODEL` | `BAAI/bge-m3` | |
@@ -660,20 +672,10 @@ Ragkit(settings=None, *, embedder=None, indexer=None, reranker=None, splitter=No
 仓库带了一份示例文档（[`examples/sample_doc.md`](examples/sample_doc.md)，虚构的员工手册）和两个脚本：
 
 ```bash
-# 端到端：解析 → 切分 → 向量化 → 入库 → 稠密/混合检索对比
-uv run python scripts/ingest_demo.py examples/sample_doc.md
-
-# schema 变了（比如刚加了 BM25 稀疏字段）时先重置
-uv run python scripts/ingest_demo.py examples/sample_doc.md --reset
-
-# 不联网、不花钱：本地假向量，只验证数据库那段
-uv run python scripts/ingest_demo.py examples/sample_doc.md --fake
-
-# 换个验证问题
-uv run python scripts/ingest_demo.py examples/sample_doc.md --query "报销多久到账"
-
-# 评估：稠密 / 混合 /（--rerank）三路对比，带分组指标
-uv run python scripts/eval_demo.py examples/sample_doc.md --rerank
+uv run python scripts/ingest_demo.py examples/sample_doc.md          # 端到端：解析→切分→向量化→入库→检索对比
+uv run python scripts/ingest_demo.py examples/sample_doc.md --reset  # schema 变了（比如刚加了 BM25）时先重置
+uv run python scripts/ingest_demo.py examples/sample_doc.md --fake   # 假向量：不联网不花钱，只验证数据库那段
+uv run python scripts/eval_demo.py examples/sample_doc.md --rerank   # 评估：稠密/混合/重排三路对比，带分组指标
 ```
 
 ---
@@ -684,47 +686,335 @@ uv run python scripts/eval_demo.py examples/sample_doc.md --rerank
 uv run ragkit --help
 ```
 
-| 命令 | 用途 | 碰数据库 |
-|---|---|---|
-| `ragkit parse <paths...>` | 只看解析结果和字数 | 否 |
-| `ragkit split <path> [--out f.jsonl]` | 切分并导出，肉眼检查切得好不好 | 否 |
-| `ragkit ingest <paths...> [--reset] [--no-flush]` | 入库 | 是 |
-| `ragkit query <text> [-k N] [--mode] [--rerank]` | 终端里手动检索验证 | 是 |
-| `ragkit count` / `delete <doc_id...>` / `drop [--yes]` | 运维 | 是 |
-| `ragkit eval <dataset.jsonl>` | 跑评估 | 是 |
-| `ragkit mcp` | 起 MCP 服务端 | 是 |
-
-**分工原则：写的走 CLI，读的走 MCP。** 入库、切分、评估由人显式触发；
-检索作为只读工具给 agent 随时调用。但 `query` **仍然留在 CLI** ——
-调试时要能脱离 agent 手动跑一次：「模型说搜不到」的时候，
+CLI 是这套工具的入场券：**不入库就没有东西可检索**。它和 MCP 的分工是
+「**写的走 CLI，读的走 MCP**」—— 入库、切分、评估这些会改变状态的动作由人显式触发，
+检索则作为只读工具交给 agent 随时调用。但 `query` **仍然留在 CLI**：
+调试时要能脱离 agent 手动跑一次。「模型说搜不到」的时候，
 第一件事是自己在终端敲一遍，看是检索真的坏了，还是模型用错了。
 
+### 命令总览
+
+| 命令 | 用途 | 碰数据库 | 主要开关 |
+|---|---|---|---|
+| `ragkit parse <paths...>` | 只看解析结果和字数 | 否 | `--json` |
+| `ragkit split <path>` | 切分并导出，肉眼检查切得好不好 | 否 | `--out` ＋ 切分开关 |
+| `ragkit ingest <paths...>` | 解析 → 切分 → 向量化 → 入库 | 是 | `--reset` `--no-flush` ＋ 切分开关 |
+| `ragkit query <text>` | 终端里手动检索验证 | 是 | `-k` `--mode` `--rerank` `--filter` ＋ 检索开关 |
+| `ragkit count` | 记录数（近似值） | 是 | `--json` |
+| `ragkit info` | 当前生效的配置 + 库里的条数 | 是（读一次） | `--json` |
+| `ragkit delete <doc_id...>` | 按 doc_id 删文档 | 是 | `--json` |
+| `ragkit drop` | 删掉整张表（不可恢复） | 是 | `--yes` |
+| `ragkit eval <dataset.jsonl>` | 在评估集上跑一遍，打印指标 | 是 | 和 `query` 同一组检索开关 |
+| `ragkit mcp` | 起 MCP 服务端（stdio） | 是 | — |
+
+切分开关 = `--splitter` `--chunk-size` `--chunk-overlap` `--no-context` `--no-merge`；
+检索开关 = `--section-aware` `--candidate-factor` `--section-boost` `--max-per-section`。
+两组都是「**同一组开关、多条命令共用**」，也就是 `split` 和 `ingest` 一定按同一套规则切，
+`query` 和 `eval` 一定按同一套规则捞 —— 否则「本地先看看切得好不好」就失去了意义。
+
+### 通用约定
+
+**① 退出码分三类**（很多 CLI 一律 `exit 1`，脚本里就分不清「参数写错了」和「检索失败了」）：
+
+| 退出码 | 含义 | 谁抛的 | 例子 |
+|---|---|---|---|
+| `0` | 成功 | — | 正常跑完 |
+| `1` | 业务失败 | `RagkitError` 家族 | Milvus 连不上、embedding 超时、文件解析失败 |
+| `2` | 参数错误 | argparse，或 CLI 的 `UsageError` | `--mode 乱填`、`--chunk-overlap 80 --chunk-size 50`、空查询 |
+| `130` | 被 Ctrl+C 中断 | — | 手动打断 |
+
 ```bash
-# 调切分参数：切完导出看一眼（完全离线，不需要 Milvus 和 API key）
-uv run ragkit split docs/手册.md --chunk-size 350 --chunk-overlap 50 --out chunks.jsonl
-Get-Content chunks.jsonl | Select-Object -First 3
-
-# 入库（改过 schema 时必须加 --reset）
-uv run ragkit ingest docs/ --reset
-
-# 手动验证检索：稠密 vs 混合 vs 混合+重排
-uv run ragkit query "住宿费上限" -k 3
-uv run ragkit query "住宿费上限" -k 3 --mode hybrid --rerank
-
-# 评估
-uv run ragkit eval data/eval.jsonl --mode hybrid -k 3
+uv run ragkit query "问题" ; echo "退出码 $?"     # 1：检索失败
+uv run ragkit query ""      ; echo "退出码 $?"     # 2：参数没给对
 ```
 
-**`--json`**：所有命令都支持，给脚本用。
+「参数之间」的约束（`overlap >= chunk_size`、`--section-boost -1`）由切分器 / 检索器的
+构造函数校验，CLI 在边界上把它们重新分类成 `UsageError` —— 所以也是 `2`。
+
+**② `--json`：所有命令都支持**，输出不转义的中文，给脚本用。
 
 ```bash
 uv run ragkit count --json
+uv run ragkit info --json                  # 全部配置项（密钥掩码），可直接 diff 两个环境
 uv run ragkit query "问题" --json | ConvertFrom-Json
 ```
 
-**退出码**：`0` 成功、`1` 业务失败（`RagkitError`）、`2` 参数错误。
-别小看这个区分 —— 很多 CLI 一律 `exit 1`，脚本里就分不清
-「参数写错了」和「检索失败了」。
+**③ `parse` / `ingest` 直接收目录**：递归子目录、只挑解析器认得的后缀
+（`.md` `.txt` `.pdf` `.docx`）、按路径排序 —— 所以 bash 和 PowerShell 写法完全一致，
+不用自己在 shell 里拼 glob。目录里一个支持的文件都没有时会直接报错，而不是静默地「0 个文件」。
+
+**④ 配置读「当前工作目录」的 `.env`。** 在别的项目里调用这个 CLI 时这条最关键：
+
+```bash
+cd D:/other-project
+uv run --project D:/400-ProgramFile/AIGC_CLASS/ragkit ragkit count   # 读的是 D:/other-project/.env
+```
+
+每个字段都有默认值，所以 `.env` 里**一个字段都可以不写**；但省略的后果分四类，得挑着省：
+
+| 省略的字段 | 会怎样 |
+|---|---|
+| `*_API_KEY` | 空串 → 调用接口时才 401（响亮） |
+| `OPENAI_EMBEDDING_URL/MODEL/DIM` | 走默认（硅基流动 + `BAAI/bge-m3` + 1024）；维度错了会在建表/检索时报错 |
+| `MILVUS_URI` / `MILVUS_COLLECTION` | 走默认（`localhost:19530` + `ragkit_chunks`）→ **静默写到另一张表上** |
+| `MILVUS_DB` | 空 = Milvus 的 `default` 库 → **连错库和「表是空的」长得一样** |
+| `CHUNK_SIZE` / `CHUNK_OVERLAP` | 走代码默认（800 / 120）→ 只要一处改过，两边的 `chunk_id` 就对不上（见[参数一致性](#参数一致性)） |
+| `TOP_K` / 超时 / 批量 / 并发 | 无所谓，命令行参数还会覆盖 |
+
+> **默认值来自代码，所以两边都不写 = 两边天然一致**；只有被显式写进某个 `.env` 的字段
+> 才可能造成两边不一致 —— 半份复制才是最坏的情况。
+> 键名拼错不会报错（`extra="ignore"`），只会被静默忽略：配完用 `ragkit info` 确认一遍，
+> 它会打出最终生效的值和 `.env` 的绝对路径。
+>
+> 例外：**MCP 服务端固定读 ragkit 项目根的 `.env`**，不是 CWD 那份（见 [MCP 一节](#作为-mcp-服务端给-agent-用)）。
+> 两边行为不一致时，先确认自己在看哪一个。
+
+**⑤ 每个开关的默认值都写在 `--help` 里**，包括「这个默认值来自 `.env` 还是固定值」：
+`uv run ragkit <命令> --help`。
+
+### 命令详解
+
+每个命令的**参数、默认值、以及它到底干什么**。`<...>` 是位置参数，其余是开关。
+
+#### `parse <paths...> [--json]`
+
+只走解析，不碰数据库、不需要 API key。
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `paths` | 必填 | 文件**或目录**（可多个）；目录会递归展开并按路径排序 |
+| `--json` | 关 | 输出 `[{source, chars, doc_id}]` |
+
+```bash
+uv run ragkit parse examples/sample_doc.md
+#     2825 字  examples/sample_doc.md
+#   1 个文件，共 2825 字
+```
+
+解析出来字数是 0 是最常见的意外（扫描件 PDF、加密 docx）—— 这一步就能看到，
+不用等入库之后才发现「怎么什么都搜不到」。
+
+#### `split <path> [--out f.jsonl] [切分开关]`
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `path` | 必填 | **只接受单个文件**（要批量就先 `parse` 目录确认文件数） |
+| `--out` | — | 导出 JSONL，每行一个 chunk（`chunk_id`/`doc_id`/`index`/`text`/`metadata`） |
+| `--json` | 关 | 额外给出每个 chunk 的 `chunk_id` 和字符数 |
+| 切分开关 | | 见[切分与检索的开关](#切分与检索的开关) |
+
+```bash
+# 完全离线：调切分参数时最常用的动作，不该被 Milvus 或 API key 卡住
+uv run ragkit split examples/sample_doc.md --chunk-size 350 --chunk-overlap 50 --out chunks.jsonl
+#   examples/sample_doc.md  ->  9 块  （min=315 max=397 平均=356，splitter=recursive chunk_size=350 overlap=50）
+
+Get-Content chunks.jsonl | Select-Object -First 3     # PowerShell
+head -n 3 chunks.jsonl                                # bash
+```
+
+#### `ingest <paths...> [--reset] [--no-flush] [切分开关]`
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `paths` | 必填 | 文件或目录（可多个） |
+| `--reset` | 关 | 先删掉整张表再建。**改过 schema 必须用**（字段建好之后改不了） |
+| `--no-flush` | 关 | 跳过写入后的 flush：批量导入更快，代价是「写完立刻查」可能查不到 |
+| `--json` | 关 | 输出 `files`/`chunks`/`written`/`doc_ids` ＋ `splitter`/`chunk_size`/`chunk_overlap` |
+| 切分开关 | | 见[切分与检索的开关](#切分与检索的开关) |
+
+```bash
+uv run ragkit ingest examples/eng_docs/langchain --reset
+# 入库完成：25 个文件  848 个 chunk  848 条记录
+```
+
+输出那三个数（`files` → `chunks` → `written`）本该相等；不等就说明中间某一步吞了东西
+（有文件解析出来是空的，或写入阶段丢数据），CLI 会打一行 `⚠️` 提醒。
+重复导入同一份文件是**幂等**的：会先按 `doc_id` 删掉旧数据，不会堆重复记录。
+
+`--json` 里那三个切分参数是**事后唯一的凭据** —— 指标不对时，靠它才能证明
+「入库和生成标注用的是不是同一套切分」（见[参数一致性](#参数一致性)）。
+
+#### `query <text> [检索开关] [--filter EXPR]`
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `text` | 必填 | 查询文本；空字符串算参数错误（退出码 2） |
+| `-k` / `--top-k` | `TOP_K`（5） | 返回几条 |
+| `--filter` | — | Milvus 过滤表达式，如 `doc_id == "abc123"`（只搜某几篇文档） |
+| 检索开关 | | 见[切分与检索的开关](#切分与检索的开关) |
+
+```bash
+uv run ragkit query "住宿费上限" -k 3 --mode hybrid --rerank
+uv run ragkit query "middleware" --section-aware --mode hybrid -k 3
+uv run ragkit query "住宿费上限" --json | ConvertFrom-Json     # JSON 里带完整正文
+```
+
+输出是「分数 + 来源文件 + 前 70 字预览」。**分数的量纲随模式而变**：稠密是余弦
+（0~1，越大越相关）、混合是 RRF 融合分（约 0~0.033）、开了重排又变成重排模型的相关度分
+（0~1）—— 所以**跨模式比大小没有意义**，换一种检索方式，分数的尺子就换了。
+
+「模型说搜不到」的时候，第一件事就是自己在这里敲一遍：看是检索真的坏了，
+还是模型用错了（问法不对、该给 `filter`、或者它根本没调这个工具）。
+
+#### `count` / `info` / `delete` / `drop` / `mcp`
+
+| 命令 | 参数 | 干什么 |
+|---|---|---|
+| `count` | `--json` | 记录数（**近似值**，基于已落盘的 segment） |
+| `info` | `--json` | 当前生效的配置 + 库里的条数 |
+| `delete <doc_id...>` | `--json` | 按 doc_id 删文档，`doc_id` 从 `ingest` 的输出里拿 |
+| `drop` | `--yes` | 删整张表（不可恢复）。默认要人工确认，确认框里显示「uri / 数据库 / collection」 |
+| `mcp` | — | 起 MCP 服务端（stdio），阻塞到客户端断开或 Ctrl+C |
+
+```bash
+uv run ragkit info
+# Milvus 地址：http://localhost:19530
+# 数据库：agent_kb
+# Collection：ragkit_chunks
+# 向量维度：1024（OPENAI_EMBEDDING_DIM）
+# Embedding：BAAI/bge-m3 @ https://api.siliconflow.cn/v1
+# 重排模型：BAAI/bge-reranker-v2-m3（RERANK_API_KEY 已配 / 未配）
+# 默认切分：chunk_size=800  chunk_overlap=120
+# 默认检索：top_k=5（mode 由命令行的 --mode 决定）
+# .env：D:\400-ProgramFile\AIGC_CLASS\ragkit\.env（存在）
+#
+# 记录数：848 条（近似值，刚写入还没 flush 的数据可能没算进来）
+```
+
+`info` 是排查的第一步 —— 它一次回答三个最容易搞混的问题：**连的是哪个库、表叫什么、
+当前配置长什么样**（含 `.env` 的绝对路径）。连不上 Milvus 时它照样打印配置部分，
+只有「记录数」那一行失败、退出码 1，而配置恰恰是那时候最需要看的。
+
+`--json` 给的是**全部 24 项**（键名就是 `.env` 里的写法，密钥只显示「已配置 / 空」，
+绝不回显），所以「A 项目和 B 项目的配置一致吗」可以直接 diff 两份 JSON；
+**被省略的字段也在里面**（值就是代码默认值）——「谁被省略了」本身就是信息。
+
+> ⚠️ 三个反直觉的点：
+>
+> 1. `count` / `info` 走的是 `ensure_collection()`，所以**表不存在时它会顺手建一个空表** ——
+>    别以为「只读命令不会动数据库」。
+> 2. `count` 是近似值。想知道「这次写进去多少条」，看 `ingest` 的 `written`。
+> 3. `doc_id` 是「路径 + 内容」的哈希，**文件一改 id 就变**：想删旧数据不能靠重新解析
+>    这个文件（算出来的 id 对不上），要么保留 `ingest` 返回的 `doc_ids`，要么 `drop` 后重来。
+
+#### `eval <dataset.jsonl> [检索开关]`
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `dataset` | 必填 | JSONL 评估集，每行 `{question, relevant_ids, metadata?}` |
+| `--json` | 关 | 输出完整报告（含每条样本的结果与失败原因） |
+| 检索开关 | | 和 `query` 共用同一套 —— 评估要测的就是你平时用的那套捞法 |
+
+```bash
+uv run ragkit eval examples/eval_sample.jsonl -k 3 --mode hybrid
+```
+
+打印 hit_rate / recall / mrr / ndcg。**打之前先看失败样本数** —— 把「接口超时」和
+「检索质量差」混在一起会误判。它还会检查另一种情况：命中率为 0 却没有任何样本失败，
+那几乎一定是标注和库里的数据对不上，CLI 会直接把这句话说出来。
+
+#### `mcp`
+
+```bash
+uv sync --extra mcp      # mcp 是可选依赖，默认不装
+uv run ragkit mcp        # 等价于 uv run python -m ragkit.mcp_server
+```
+
+配置见 [MCP 一节](#作为-mcp-服务端给-agent-用)。
+
+### 切分与检索的开关
+
+文档不一样，「怎么切」和「怎么捞」也该不一样。这两组开关**被多条命令共用**：
+`split` 和 `ingest` 一定按同一套规则切，`query` 和 `eval` 一定按同一套规则捞 ——
+否则「本地先看看切得好不好」就失去了意义。
+
+| 开关 | 默认 | 作用 |
+|---|---|---|
+| `--splitter recursive` | ✅ | 按分隔符递归切，通用文本够用 |
+| `--splitter section` | | 按 Markdown 标题分节，每块补 `[doc: X \| section: A > B]` 前缀；代码块不切开，frontmatter 剥掉 |
+| `--chunk-size` | `.env` 的 `CHUNK_SIZE`（800） | 每块目标字符数 |
+| `--chunk-overlap` | recursive：`.env` 的 `CHUNK_OVERLAP`（120）；**section：`0`** | 相邻块重叠字符数。两个切分器的默认值**刻意不同**，见下节 |
+| `--no-context` | 关 | 只在 `section` 下生效：不补标题前缀（消融对照用） |
+| `--no-merge` | 关 | 只在 `section` 下生效：不合并相邻小节（消融对照用） |
+| `--section-aware` | 关 | 检索后处理：标题加权 + 去近似重复 + 同节限流 |
+| `--candidate-factor` | `4` | 只在 `--section-aware` 下生效：先取 `top_k × 4` 条候选再做后处理 |
+| `--section-boost` | `0.5` | 只在 `--section-aware` 下生效：标题全中时分数最多乘 1.5 |
+| `--max-per-section` | `2` | 只在 `--section-aware` 下生效：同一节最多贡献几条 |
+
+只在某个模式下生效的开关，如果**在别的模式下传了**，CLI 会在 stderr 上打一行提示说
+「本次已忽略」——「参数传了却不生效」是这个项目里最难自查的一类问题，所以宁可啰嗦。
+
+`--section-aware` **依赖 `[doc | section]` 前缀**（标题加权全靠那一行），所以要配
+`--splitter section` 才有意义；挂在 recursive 的结果上，它只剩「去重 + 同节限流」，
+而那两件事会退化成「每篇文档最多 2 条」。
+
+### 参数一致性
+
+`chunk_id` 是**切分结果**的内容哈希，由三个值共同决定：**切分器 + `chunk_size` +
+`chunk_overlap`**。任意一个变了，整批 id 就全变 —— 而评估集里的标注（`relevant_ids`）
+绑的正是 `chunk_id`。
+
+两套 id 对不上时，检索**完全正常**，只是拿到的 id 一个也对不上：
+指标悄悄偏低，一句报错都没有。实测（25 篇语料，标注按 `section(800/0)` 生成）：
+
+| 入库用的切分 | 库里 chunk 数 | 与标注的交集 |
+|---|---|---|
+| `section(800/0)` | 1111 | **28 / 28** |
+| `section(800/120)` | 1111 | 24 / 28 |
+
+第二行就是「忘了调 overlap」的样子：不是全 0，而是**静悄悄地漏掉 14% 的标注**，
+召回率上限从 1.0 掉到 0.857 —— 而你还以为是检索质量差。
+
+三道防线：**① `section` 的默认 overlap 就是 0**（和生成脚本的默认值对齐）；
+**② `ingest --json` 记下那三个值**（事后有据可查）；
+**③ `eval` 在「命中率 0 且无失败样本」时直接告诉你**是标注对不上，不是检索坏了。
+再自查就一条：`ragkit info` 打当前配置 + 库里条数，把「入库时记下的三个值」和
+「生成评估集时用的三个值」比一比，问题立刻就出来了。
+
+### 四组对照实验
+
+想知道「换个切分 / 加个后处理到底值多少分」，`examples/eng_docs/` 下已经备好三份
+对应的评估集（`section` 的 overlap 默认就是 0，不用再手写 `--chunk-overlap 0`）：
+
+```bash
+# A 基线：recursive 切分
+uv run ragkit ingest examples/eng_docs/langchain --reset
+uv run ragkit eval examples/eng_docs/eval_langchain_recursive.jsonl -k 3 --mode hybrid
+
+# B 只换切分器：按标题分节 + 补标题路径
+uv run ragkit ingest examples/eng_docs/langchain --splitter section --reset
+uv run ragkit eval examples/eng_docs/eval_langchain_section.jsonl -k 3 --mode hybrid
+
+# C 再叠结构感知检索（复用 B 已入库的数据，不必重新 ingest）
+uv run ragkit eval examples/eng_docs/eval_langchain_section.jsonl -k 3 --mode hybrid --section-aware
+
+# D 消融：关掉标题前缀，看「补标题」本身值多少
+uv run ragkit ingest examples/eng_docs/langchain --splitter section --no-context --reset
+uv run ragkit eval examples/eng_docs/eval_langchain_nocontext.jsonl -k 3 --mode hybrid
+```
+
+四组的 `chunk_id` 各不相同，所以评估集也要各一份：换语料或换参数时用
+[`scripts/build_eval_variants.py`](scripts/build_eval_variants.py) 重新生成
+（默认值和 `ragkit ingest` 完全一致，所以同一个配置两边算出的 `chunk_id` 必然对得上）。
+脚本还会顺手检查「依据有没有命中」（没命中直接报错退出）和
+「单条依据命中的块是不是太多」（超过 `--max-hits` 就告警 —— 依据太泛会让指标虚高）。
+
+### 排查手册
+
+按「最可能先撞上」排序。每一条都能用 CLI 自己查：
+
+| 症状 | 最可能的原因 | 怎么办 |
+|---|---|---|
+| 指标全是 0，且没有失败样本 | 标注和库里不是同一套切分 | `ragkit info` 看配置 → 核对 `ingest --json` 里的三个值 → 用脚本按当前配置重生成评估集 |
+| 指标低得莫名其妙 | 同上，只是漏了一部分标注 | 同上（`section` 忘了调 overlap 就是 28 → 24 那种） |
+| 刚入库却查不到 | Milvus 是最终一致性 | 别加 `--no-flush`；或者稍等再 `count` |
+| `count` 和 `written` 对不上 | `count` 是近似值 | 以 `ingest` 返回的 `written` 为准 |
+| 换了 embedding 模型就报维度错 | `OPENAI_EMBEDDING_DIM` 没跟着改 | 改 `.env` 后 `ingest --reset`（schema 里的维度改不了） |
+| 混合检索 + 阈值直接报错 | RRF 分（0~0.033）和余弦（0~1）不是一个量纲 | 去掉阈值，或者开 `--rerank` |
+| 开了 `--rerank` 却没变化 | 没配 key，或候选池太小 | 看 `ragkit info` 那行「RERANK_API_KEY」；候选池默认 `max(k*4, 20)` |
+| `--no-context` / `--no-merge` 看不出区别 | 它们只对 `--splitter section` 有效 | CLI 会打提示；加上 `--splitter section` |
+| `--max-per-section` 之类看不出区别 | 没开 `--section-aware` | CLI 会打提示；加上 `--section-aware` |
+| 数据「不见了」/ 删错了库 | `.env` 读的是**当前工作目录**那一份 | `ragkit info` 最后一行会打出 `.env` 的实际路径 |
 
 ---
 
@@ -737,13 +1027,61 @@ uv sync --extra mcp          # mcp 是可选依赖，默认不装
 uv run python -m ragkit.mcp_server
 ```
 
-**只暴露了一个工具**：`search_knowledge_base(query, top_k)`。
+**对外只有一个工具**：`search_knowledge_base(query, top_k)`，只读。
 
-**为什么只有只读检索** —— 这些工具会被 agent 自动注册给模型，而**模型能调什么，就等于它能做什么**。
-入库、删除、重建 collection 都是运维动作，留在 CLI 里；否则模型一句「帮我清理一下」就能把库删了。
+- **只有只读检索。** 这些工具会被 agent 自动注册给模型，而**模型能调什么，就等于它能做什么**。
+  入库、删除、重建 collection 都是运维动作，留在 CLI 里 —— 否则模型一句「帮我清理一下」
+  就能把库删了。
+- **标了 `read_only_hint=True`。** 客户端据此判断要不要人工审批；不标的话，纯读的检索
+  也会每次弹确认，在非交互场景（脚本、CI）里会被直接拒绝。
+- **返回文本、不带分数。** 混合检索的分是 RRF（0~0.033），加了重排又变成 0~1，同一个字段
+  两种量纲，模型解读不了 —— 实测会让它得出「匹配度很低」这种错误结论。
+  同理，**用哪个策略也只写进日志**，那种诊断信息一旦进了上下文，模型很容易把它
+  写进给用户的答案里（「我用 hybrid_rerank 检索到……」）。
+- **`top_k` 上限 10。** 模型偶尔会要 100 条，那会把上下文塞爆。
 
-**返回文本、不带分数** —— 混合检索的分是 RRF（0~0.033），加了重排又变成 0~1，
-同一个字段两种量纲，模型解读不了，实测会让它得出「匹配度很低」这种错误结论。分数是给调试用的。
+### 配置
+
+MCP 服务端**只有三个配置项**，都走环境变量（**不是**工具参数）：
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `RAGKIT_MCP_STRATEGY` | `hybrid_rerank` | 用哪种检索方式，取值见下表 |
+| `RAGKIT_MCP_MODE` | — | ⚠️ 已废弃，改用上面那个 |
+| `RAGKIT_MCP_RERANK` | — | ⚠️ 已废弃；仍然认，会映射成策略名并打一行警告 |
+
+**两个来源都认，优先级是「进程环境变量 > 项目根的 `.env`」**（和 CLI 的规则一致）：
+
+```ini
+# ① 项目根的 .env —— 本机改一下，所有客户端都跟着变
+RAGKIT_MCP_STRATEGY=section_aware
+```
+
+```json
+// ② MCP 客户端的 env 块 —— 优先级更高，只影响这一个客户端
+"env": { "RAGKIT_MCP_STRATEGY": "section_aware" }
+```
+
+> ⚠️ 注意路径：CLI 读**当前工作目录**的 `.env`，而 MCP 服务端固定读 **ragkit 项目根**
+> 的那份（它由 agent 拉起，工作目录不可控）。两边行为不一致时，先确认自己在看哪一个。
+
+**检索方式不给模型选** —— 工具上没有这个参数。模型既不知道这套库上哪种更好，也不知道
+你有没有配重排 key；给它一个参数，结果就是每次随机试一种，而且它会拿着「这次换策略了」
+的错觉去解读同一批结果（换一种策略，分数的尺子都变了）。要换就改配置，改一次就一直是它。
+
+| 策略 | 组成 | 擅长 |
+|---|---|---|
+| `dense` | 纯向量 | 「换一种说法问同一件事」；最快最省 |
+| `hybrid` | 向量 + BM25（RRF 融合） | 含专有名词、编号、罕见词的提问 |
+| `hybrid_rerank` | hybrid + 重排 | 提问用词和原文差得很远（**默认**） |
+| `section_aware` | hybrid + 结构感知后处理 | 同一主题的工程文档（依赖 `[doc \| section]` 前缀，要 `--splitter section` 入库过） |
+| `section_aware_rerank` | 上面 + 重排 | 工程文档语料上通常是最强的一档 |
+
+**名字写错会在启动时直接报错**，并把可选值连同「擅长什么」一起列出来 —— 服务起不来，
+你当场就知道；这比「检索结果悄悄变差」好查得多。
+
+> 没配 `RERANK_API_KEY` 时**不要**用带 `rerank` 的策略，否则每次检索都会失败；
+> `ragkit info` 里能看到这个 key 配没配。
 
 ### 客户端配置
 
@@ -753,7 +1091,8 @@ uv run python -m ragkit.mcp_server
     "ragkit": {
       "command": "D:/path/to/ragkit/.venv/Scripts/python.exe",
       "args": ["-m", "ragkit.mcp_server"],
-      "cwd": "D:/path/to/ragkit"
+      "cwd": "D:/path/to/ragkit",
+      "env": { "RAGKIT_MCP_STRATEGY": "hybrid_rerank" }
     }
   }
 }
@@ -766,25 +1105,29 @@ uv run python -m ragkit.mcp_server
   「`VIRTUAL_ENV` does not match the project environment path」的警告。
   它走 stderr、不影响协议，但每次启动都刷一遍很烦。
 
-> ⚠️ **`cwd` 一定要填。** `.env` 是按工作目录找的，而 agent 拉起子进程时的工作目录由客户端决定。
-> 代码里已经兜了一层（会去项目根找 `.env`），但显式写上最保险。
+> **`cwd` 建议显式写上。** 服务端找 `.env` 用的是**项目根的固定路径**（不依赖工作目录），
+> 所以不填也能跑；写上是为了让「这个进程在哪、读的哪个项目」一目了然。
 >
-> 如果更习惯 `uv`，`{"command": "uv", "args": ["run", "--extra", "mcp", "python", "-m", "ragkit.mcp_server"]}` 也能用，只是会多一次解析和可能的警告。
+> 换 `uv` 也行：`{"command": "uv", "args": ["run", "--extra", "mcp", "python", "-m", "ragkit.mcp_server"]}`，
+> 代价是多一次依赖解析和可能的警告。
 
-### 环境变量
+**验证配置生效了没有**：启动后正常是**一句话都不输出**（stdout 是协议通道）；
+如果策略名写错了，进程会立刻退出并打印一行「不认识 …」＋全部可选值。
+另外每次检索都会往 stderr 打一行日志：
 
-| 变量 | 默认 | 说明 |
-|---|---|---|
-| `RAGKIT_MCP_MODE` | `hybrid` | `dense` / `hybrid`；写错会在**启动时**直接报错 |
-| `RAGKIT_MCP_RERANK` | `1` | 设 `0` 关闭重排。**没配 `RERANK_API_KEY` 时必须设成 0**，否则每次检索都失败 |
-
-> 检索策略走环境变量而不是工具参数，因为它属于**部署决策** ——
-> 不该让模型每次现挑（它没有判断依据，只会随便试）。
+```
+检索完成：strategy=section_aware top_k=5 命中=3
+```
 
 ### 调试注意
 
 **stdio 模式下 stdout 是 JSON-RPC 协议通道。** 任何 `print()` 都会污染协议流，
 让客户端解析失败，而且报错完全指不到原因。调试信息一律走 `logging`（默认输出到 stderr）。
+
+> 顺带一句：MCP SDK 导入时会把 root logger 设成 INFO，handler 指向 **stderr**，
+> 所以默认是安全的；但 httpx 会跟着把每一次请求都打出来。
+> [`mcp_server.py`](src/ragkit/mcp_server.py) 里把 `httpx` 压到了 WARNING ——
+> 排查「搜不到」的时候，看我们自己那行「检索完成：strategy=… 命中=…」就够了。
 
 ---
 
@@ -808,18 +1151,18 @@ ndcg            0.876      0.966      1.000
 
 ## 常见坑速查
 
-按「最常踩」排序。每条都对应代码里的一处显式处理，不是空话。
+按「最常踩」排序，每条都对应代码里的一处显式处理。**操作层面**的坑（连错库、写完查不到、
+指标异常）在[排查手册](#排查手册)里，这里只列**写代码时**容易踩的：
 
 1. **`OPENAI_EMBEDDING_DIM` 写错** → 不会立刻报错，会一路走到建 Milvus 表才失败。代码里设了三道校验挡它。
 2. **Milvus 版本低于 2.5** → `hybrid_search` / `RRFRanker` 不存在。启动时先打印服务端版本。
-3. **写入后立刻检索查不到** → Milvus 是**最终一致性**的，新数据要先落盘。`ingest` 默认会自动 `flush`。
-4. **混合模式设 `score_threshold`** → 会直接报错，因为 RRF 分（0~0.033）和余弦相似度（0~1）不是一个量纲。
-5. **只把 top-k 拿去重排** → 重排只能在 k 条里换顺序，等于白开。候选池必须放大（默认 `max(k*4, 20)`）。
-6. **`x or default` 的 falsy 陷阱** → `top_k=0` 会被静默换成默认值，让校验形同虚设。用 `x if x is not None else default`。
-7. **改了 schema 没重建 collection** → 字段是改不了的，必须 `reset=True` 或 `drop()` 后重来。
-8. **环境变量拼错** → `extra="ignore"` 会静默忽略，用默认值跑。
-9. **`except ParseError` 抓不到 TaskGroup 的异常** → 它被包在 `ExceptionGroup` 里；`Ragkit` 会自动解包单个错误。
-10. **文件改了想删旧数据** → `doc_id` 是内容哈希，改内容就换了身份，只能整表重建或保存原始 `doc_ids`。
+3. **`x or default` 的 falsy 陷阱** → `top_k=0` 会被静默换成默认值，让校验形同虚设。用 `x if x is not None else default`。
+4. **只把 top-k 拿去重排** → 重排只能在 k 条里换顺序，等于白开。候选池必须放大（默认 `max(k*4, 20)`）。
+5. **混合模式设 `score_threshold`** → 直接报错，因为 RRF 分（0~0.033）和余弦（0~1）不是一个量纲。
+6. **改了 schema 没重建 collection** → 字段是改不了的，必须 `reset=True` / `--reset` / `drop()` 后重来。
+7. **`except ParseError` 抓不到 TaskGroup 的异常** → 它被包在 `ExceptionGroup` 里；`Ragkit` 会自动解包单个错误。
+8. **`ruff format .` 把语料改了** → `examples/eng_docs/` 是数据不是代码，里面的代码块一旦被重排，
+   `chunk_id` 全变、评估标注集体失效。`pyproject.toml` 里已经用 `extend-exclude` 把它排除掉了。
 
 ---
 
@@ -829,7 +1172,7 @@ ndcg            0.876      0.966      1.000
 uv run ruff format .      # 排版
 uv run ruff check .       # 静态检查
 uv run mypy src           # 类型检查（当前 0 错误）
-uv run pytest -q          # 206 条测试，全部离线
+uv run pytest -q          # 281 条测试，全部离线
 ```
 
 **测试不需要 Milvus，也不需要 API key**，靠的是三件事：
@@ -848,16 +1191,18 @@ src/ragkit/
 ├── http.py            异步 JSON 客户端（重试 / 限流 / 异常翻译）
 ├── parsing/           文件 → Document
 ├── processing.py      清洗（同步，纯 CPU）
-├── splitting/         Document → Chunk（同步）
+├── splitting/         Document → Chunk（同步；含 MarkdownSectionSplitter）
 ├── embedding/         文本 → 向量
 ├── indexing/          chunk + 向量 → Milvus
-├── retrieval/         查询 → ScoredChunk（含混合检索与重排）
+├── retrieval/         查询 → ScoredChunk（稠密/混合/重排 + SectionAwareRetriever）
 ├── evaluation/        HitRate / Recall / MRR / NDCG
-└── pipeline.py        Ragkit 门面
+├── pipeline.py        Ragkit 门面
+├── cli.py             命令行（parse / split / ingest / query / count / info / …）
+└── mcp_server.py      MCP 服务端（只读检索）
 
-tests/                 206 条测试，离线
-scripts/               端到端 demo 与评估
-examples/              示例文档
+tests/                 281 条测试，离线
+scripts/               端到端 demo、评估对比、评估集生成
+examples/              sample_doc.md，以及 eng_docs/（LangChain 工程文档语料）
 ```
 
 ---
@@ -867,8 +1212,8 @@ examples/              示例文档
 | 限制 | 说明 |
 |---|---|
 | **没有生成环节** | 只做检索，不调 LLM 出答案。`RAGResult` 模型已就位，接上即可 |
-| **CI 里没有真 Milvus** | 206 条测试全离线，证明**逻辑**正确，证明不了**契约**。见「设计笔记」第 5 条 |
-| **MCP 层只测了格式化函数** | `search_knowledge_base` 要连真 Milvus，属于集成测试范畴 |
+| **CI 里没有真 Milvus** | 281 条测试全离线，证明**逻辑**正确，证明不了**契约**。见「设计笔记」第 5 条 |
+| **MCP 层只测了格式化与策略选择** | 真正跑一次检索要连 Milvus，属于集成测试的范畴 |
 | **测试替身有三份重复** | `FakeMilvusClient` 手抄了三份并已漂移。正式落点已定为 [`tests/fakes.py`](tests/fakes.py)，存量迁移待办 |
 | **自动标注的评估集** | 见[评估结果](#评估结果)，它偏向关键词匹配 |
 | **`Ragkit` 没暴露 `flush()`** | 大批量导入想手动控制刷盘时机，得用底层的 `MilvusIndexer` |
