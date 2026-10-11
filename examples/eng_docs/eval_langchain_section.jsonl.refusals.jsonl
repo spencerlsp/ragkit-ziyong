@@ -1,0 +1,5 @@
+{"question": "LangChain 的商业模式和 API 定价是怎样的？", "relevant_ids": [], "metadata": {"id": "R01", "type": "refusal", "evidence": []}}
+{"question": "LangChain 仓库现在有多少个 GitHub star？", "relevant_ids": [], "metadata": {"id": "R02", "type": "refusal", "evidence": []}}
+{"question": "这套代码在 Python 3.13 上的性能基准数字是多少？", "relevant_ids": [], "metadata": {"id": "R03", "type": "refusal", "evidence": []}}
+{"question": "把 LangChain 部署到 AWS 上大概要花多少钱？", "relevant_ids": [], "metadata": {"id": "R04", "type": "refusal", "evidence": []}}
+{"question": "这套 CI 流水线每天运行要花多少钱？", "relevant_ids": [], "metadata": {"id": "R05", "type": "refusal", "evidence": []}}

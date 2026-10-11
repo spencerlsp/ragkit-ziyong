@@ -56,6 +56,16 @@ default = true
 line-length = 100
 target-version = "py311"
 
+# examples/eng_docs 是**语料**，不是代码。
+#
+# 它里面的 .md 来自 LangChain 官方仓库、逐字未改，而代码块里的 Python
+# 并不符合本项目的排版规则 —— 不加这条排除的话，`ruff format .`
+# （README 的开发命令）会把那些代码块重新排版：
+#   * 语料一改，`chunk_id` 全变，评估集里绑在 chunk_id 上的标注全部失效；
+#   * 也让 examples/eng_docs/README.md 里「内容未改动」那句话变成假的。
+# 数据就是数据，别让格式化工具去动它。
+extend-exclude = ["examples/eng_docs"]
+
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]   # E/F 基础错误、I 导入排序、UP 语法现代化、B/SIM 常见坑

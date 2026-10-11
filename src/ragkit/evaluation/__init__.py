@@ -24,13 +24,14 @@ from __future__ import annotations
 
 from .dataset import EvalSample, dump_dataset, load_dataset
 from .metrics import hit_rate, ndcg_at_k, recall_at_k, reciprocal_rank
-from .runner import EvalReport, FailureRecord, SampleResult, evaluate
+from .runner import EvalReport, FailureRecord, RetrieverLike, SampleResult, evaluate
 
 __all__ = [
     "EvalSample",
     "load_dataset",
     "dump_dataset",
     "evaluate",
+    "RetrieverLike",
     "EvalReport",
     "SampleResult",
     "FailureRecord",

@@ -16,6 +16,9 @@ __all__ = ["FixedSplitter"]
 class FixedSplitter:
     """每 chunk_size 个字符切一刀，相邻块重叠 overlap 个字符。"""
 
+    # 和 RecursiveSplitter.name 一样：给入库结果留一份「用的是哪个切分器」。
+    name = "fixed"
+
     def __init__(self, chunk_size: int, chunk_overlap: int) -> None:
         """``chunk_overlap`` 必须小于 ``chunk_size``，否则切分永远不前进。"""
         if chunk_size <= 0:

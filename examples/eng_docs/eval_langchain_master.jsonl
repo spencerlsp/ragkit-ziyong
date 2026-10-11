@@ -1,0 +1,31 @@
+{"id": "F01", "type": "fact", "question": "langchain-core 在整个生态里扮演什么角色？", "evidence": ["Stable base abstractions. Major version bumps are rare and announced in advance."]}
+{"id": "F02", "type": "fact", "question": "我只写 gpt-4o 这种模型名、不写 provider 前缀，LangChain 靠什么判断该用哪一家？", "evidence": ["`_attempt_infer_model_provider` uses case-insensitive prefix matching"]}
+{"id": "F03", "type": "fact", "question": "想在请求真正发出去之前拦截并改写模型调用，该用哪个 hook？", "evidence": ["Intercept and control model execution."]}
+{"id": "F04", "type": "fact", "question": "工具的参数 schema 如果没有显式指定，是从哪里推断出来的？", "evidence": ["Inferred from function signature via `create_schema_from_function()`"]}
+{"id": "F05", "type": "fact", "question": "有些参数不该让模型填、而应该在运行时注入，要用什么标记？", "evidence": ["A marker class for parameters that should be injected at runtime"]}
+{"id": "F06", "type": "fact", "question": "流式输出时，每个 chunk 里的 content 是累计值还是增量？", "evidence": ["each chunk contains only the new token(s) or delta for that step"]}
+{"id": "F07", "type": "fact", "question": "想把流式 token 实时推给自己的 WebSocket，要覆写哪个回调方法？", "evidence": ["def on_llm_new_token(self, token: str, **kwargs: Any) -> None:"]}
+{"id": "F08", "type": "fact", "question": "结构化输出必须每次手动挑策略吗？", "evidence": ["Defers strategy selection until model invocation time."]}
+{"id": "F09", "type": "fact", "question": "结构化输出解析失败时，模型还有机会纠正吗？", "evidence": ["Error message wrapped in `ToolMessage` appended to conversation"]}
+{"id": "F10", "type": "fact", "question": "怎么统计一次调用花了多少 token、大概多少钱？", "evidence": ["Aggregates token usage metadata across LLM calls, collecting input/output tokens and cost information keyed by model name."]}
+{"id": "F11", "type": "fact", "question": "主模型挂了想自动降级到备用模型，怎么配？", "evidence": ["model = ChatOpenAI().with_fallbacks([ChatAnthropic(), ChatCohere()])"]}
+{"id": "F12", "type": "fact", "question": "创建 agent 的入口函数是哪个？可以直接传模型名字符串吗？", "evidence": ["model: str | BaseChatModel,"]}
+{"id": "F13", "type": "fact", "question": "agent 的循环在什么情况下会自然停下来？", "evidence": ["Model does not call any tools (`tool_calls` is empty)."]}
+{"id": "F14", "type": "fact", "question": "MCP 工具跑到一半需要用户确认，LangChain 这边怎么接住？", "evidence": ["The adapter converts this to a LangGraph `interrupt()`"]}
+{"id": "F15", "type": "fact", "question": "集成测试怎么把真实 API 的响应录下来，让 CI 离线重放？", "evidence": ["Run the test with `--record-mode=new_episodes`"]}
+{"id": "F16", "type": "fact", "question": "录 cassette 的时候，API key 会不会被写进文件里？", "evidence": ["sensitive headers and tokens in request/response bodies are **scrubbed**"]}
+{"id": "F17", "type": "fact", "question": "不想调真实 API 也能测 agent 的工具调用流程，该用哪个假模型？", "evidence": ["For testing agents and structured workflows without API calls, use `FakeToolCallingModel` from the test utilities:"]}
+{"id": "F18", "type": "fact", "question": "Jinja2 模板默认有沙箱保护吗？外部来的模板能直接用吗？", "evidence": ["LangChain applies `SandboxedEnvironment` by default, blocking access to dunder attributes", "Do not accept Jinja2 templates from untrusted sources."]}
+{"id": "F19", "type": "fact", "question": "发布流程怎么防止 pyproject.toml 里的版本号和发布标签对不上？", "evidence": ["Extracts version from `pyproject.toml` and compares against input using PEP 440 normalization"]}
+{"id": "F20", "type": "fact", "question": "单元测试放在哪个目录？跑测试时有什么网络限制？", "evidence": ["Unit tests live in `tests/unit_tests/` (no network calls allowed)."]}
+{"id": "F21", "type": "fact", "question": "给新接入的模型厂商写标准测试，参考哪个包？", "evidence": ["`/libs/standard-tests/README.md`"]}
+{"id": "M01", "type": "multi_hop", "question": "我要接入一个新的模型厂商：代码目录怎么摆、怎么注册进工厂函数、又该写什么测试？", "evidence": ["Create a new directory under `/libs/partners/` with the provider name in lowercase", "_BUILTIN_PROVIDERS: dict[str, tuple[str, str, Callable[..., BaseChatModel]]]", "`/libs/standard-tests/README.md`"]}
+{"id": "M02", "type": "multi_hop", "question": "结构化输出在 agent 内部到底是怎么实现的？", "evidence": ["`OutputToolBinding` is the bridge between a schema and a tool.", "A structured output tool is executed"]}
+{"id": "M03", "type": "multi_hop", "question": "middleware 和 callback 介入模型调用的方式有什么本质区别？", "evidence": ["Intercept and control model execution.", "iterates over handlers and calls the corresponding event method"]}
+{"id": "M04", "type": "multi_hop", "question": "我想让危险操作在执行前停下来、等人工批准，有哪些现成机制？", "evidence": ["**HumanInTheLoopMiddleware**: Pauses after model-requested tool calls and sends an interrupt with action summaries to a human reviewer.", "The adapter converts this to a LangGraph `interrupt()`"]}
+{"id": "M05", "type": "multi_hop", "question": "流式返回的那些 chunk，和普通返回的完整消息在结构上是什么关系？", "evidence": ["`AIMessageChunk` is the message type yielded during streaming.", "Plain text output from a model. Annotations enable citations pointing to source documents."]}
+{"id": "R01", "type": "refusal", "question": "LangChain 的商业模式和 API 定价是怎样的？", "evidence": [], "note": "语料是工程文档，只有架构与开发流程，不含商业信息"}
+{"id": "R02", "type": "refusal", "question": "LangChain 仓库现在有多少个 GitHub star？", "evidence": [], "note": "仓库指标不在这批文档里"}
+{"id": "R03", "type": "refusal", "question": "这套代码在 Python 3.13 上的性能基准数字是多少？", "evidence": [], "note": "文档里没有性能基准数据"}
+{"id": "R04", "type": "refusal", "question": "把 LangChain 部署到 AWS 上大概要花多少钱？", "evidence": [], "note": "文档涉及 MCP 传输方式，但不含云部署成本"}
+{"id": "R05", "type": "refusal", "question": "这套 CI 流水线每天运行要花多少钱？", "evidence": [], "note": "文档讲了 CI 流程，但没有成本数据"}

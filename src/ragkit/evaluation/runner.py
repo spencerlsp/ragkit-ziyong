@@ -17,17 +17,42 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
-from typing import Literal
+from typing import Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..errors import EvaluationError
-from ..retrieval import Retriever
 from ..schemas import ScoredChunk
 from .dataset import EvalSample
 from .metrics import hit_rate, ndcg_at_k, recall_at_k, reciprocal_rank
 
-__all__ = ["EvalReport", "SampleResult", "FailureRecord", "evaluate"]
+__all__ = ["RetrieverLike", "EvalReport", "SampleResult", "FailureRecord", "evaluate"]
+
+
+@runtime_checkable
+class RetrieverLike(Protocol):
+    """评估需要的最小检索器接口。
+
+    ``evaluate`` 只做一件事：拿问题去 ``retrieve`` 一批片段。
+    所以这里**刻意不写成具体的 ``Retriever``** —— 评估的主要用途之一就是
+    「换一个检索器比一比」，参数类型一旦钉死成具体类，
+    任何包了一层后处理的检索器（比如 ``SectionAwareRetriever``）
+    就都进不了评估，而那恰恰是最该被评估的东西。
+
+    只声明 ``evaluate`` 真正会传的那几个参数：声明得越少，
+    能塞进来的实现就越多，而多出来的参数调用方也用不到。
+    """
+
+    async def retrieve(
+        self,
+        query: str,
+        *,
+        top_k: int | None = None,
+        mode: Literal["dense", "hybrid"] = "dense",
+        rerank: bool = False,
+    ) -> list[ScoredChunk]:
+        """按 ``query`` 取回一批带分数的片段。"""
+        ...
 
 
 class SampleResult(BaseModel):
@@ -84,7 +109,7 @@ def _extract_id(hit: ScoredChunk, match_on: str) -> str:
 
 async def evaluate(
     samples: Sequence[EvalSample],
-    retriever: Retriever,
+    retriever: RetrieverLike,
     *,
     k: int = 5,
     mode: Literal["dense", "hybrid"] = "dense",

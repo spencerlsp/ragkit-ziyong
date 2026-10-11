@@ -16,12 +16,14 @@ from ..config import get_settings
 from ..schemas import Chunk, Document
 from .export import write_chunks_jsonl
 from .fixed import FixedSplitter
+from .markdown_section import MarkdownSectionSplitter
 from .recursive import RecursiveSplitter
 
 __all__ = [
     "Splitter",
     "RecursiveSplitter",
     "FixedSplitter",
+    "MarkdownSectionSplitter",
     "split_document",
     "split_documents",
     "write_chunks_jsonl",

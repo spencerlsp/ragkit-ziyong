@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -44,6 +44,21 @@ from .splitting import RecursiveSplitter, Splitter
 __all__ = ["IngestResult", "Ragkit"]
 
 
+def _describe_splitter(splitter: Splitter) -> dict[str, Any]:
+    """把「这次用的是什么切分」摊平成三个值，随入库结果一起返回。
+
+    为什么用 ``getattr`` 而不是要求在 ``Splitter`` 协议里声明这些属性：
+    那个协议刻意只描述「能不能切」这一件事（一个 ``split`` 方法），
+    多要求几个数据属性只会让第三方实现更难接进来。
+    自带的三个切分器都带了 ``name`` 和两个尺寸属性；缺了就用类名兜底。
+    """
+    return {
+        "splitter": getattr(splitter, "name", type(splitter).__name__),
+        "chunk_size": int(getattr(splitter, "chunk_size", 0)),
+        "chunk_overlap": int(getattr(splitter, "chunk_overlap", 0)),
+    }
+
+
 class IngestResult(BaseModel):
     """一次入库的结果。
 
@@ -53,6 +68,10 @@ class IngestResult(BaseModel):
           * files 多于 chunks —— 有文件解析出来是空的（或全是扫描件）；
           * chunks 多于 written —— 写入阶段丢数据了。
         只给一个总数，你什么都看不出来。
+
+    切分参数（splitter / chunk_size / chunk_overlap）同样要一起返回，
+    理由见下面三个字段的注释 —— 它们是**事后唯一能证明
+    「入库和评估是不是同一套切分」的证据**。
     """
 
     files: int
@@ -61,6 +80,13 @@ class IngestResult(BaseModel):
     # 入库的文档 ID。为什么要返回它：**这是你之后删除这批数据的唯一凭据**。
     # 不给的话，用户想删掉刚导进去的那篇文档，只能自己去算 stable_id(path, text)。
     doc_ids: list[str] = Field(default_factory=list)
+    # chunk_id 是「切分结果」的内容哈希：换切分器、换 chunk_size、换 chunk_overlap，
+    # 整批 id 就全变了。而评估集里的标注绑的正是 chunk_id ——
+    # 所以指标莫名其妙全 0（或低得离谱）时，第一个要核对的就是这三个值。
+    # 事后靠「我记得我设过 350」是查不出来的，只有记下来才查得出来。
+    splitter: str
+    chunk_size: int
+    chunk_overlap: int
 
 
 class Ragkit:
@@ -146,7 +172,7 @@ class Ragkit:
         """
         items = [Path(path) for path in paths]
         if not items:
-            return IngestResult(files=0, chunks=0, written=0)
+            return IngestResult(files=0, chunks=0, written=0, **_describe_splitter(self._splitter))
 
         if reset:
             await self._indexer.drop()
@@ -183,6 +209,7 @@ class Ragkit:
             chunks=len(chunks),
             written=written,
             doc_ids=[document.doc_id for document in documents],
+            **_describe_splitter(self._splitter),
         )
 
     async def delete_document(self, doc_id: str) -> int:

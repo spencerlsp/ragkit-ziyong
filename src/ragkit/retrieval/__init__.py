@@ -15,10 +15,24 @@ from __future__ import annotations
 
 from .reranker import HttpReranker, Reranker, create_reranker
 from .retriever import Retriever, doc_filter
+from .section_aware import SectionAwareRetriever
+from .strategies import (
+    DEFAULT_STRATEGY,
+    STRATEGIES,
+    Strategy,
+    describe_strategies,
+    resolve_strategy,
+)
 
 __all__ = [
     "Retriever",
     "doc_filter",
+    "SectionAwareRetriever",
+    "Strategy",
+    "STRATEGIES",
+    "DEFAULT_STRATEGY",
+    "resolve_strategy",
+    "describe_strategies",
     "Reranker",
     "HttpReranker",
     "create_reranker",

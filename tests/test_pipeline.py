@@ -19,6 +19,7 @@ from fakes import StubEmbedder, StubReranker, StubStore, make_chunk
 from ragkit import Ragkit
 from ragkit.errors import ParseError
 from ragkit.schemas import ScoredChunk
+from ragkit.splitting import MarkdownSectionSplitter
 
 
 def write(path: Path, name: str, text: str) -> Path:
@@ -30,7 +31,10 @@ def write(path: Path, name: str, text: str) -> Path:
 def build(**overrides: object) -> tuple[Ragkit, StubEmbedder, StubStore, StubReranker]:
     """造一个三个组件全注入的 Ragkit，方便测试观察。"""
     embedder, store, reranker = StubEmbedder(), StubStore(), StubReranker()
-    rag = Ragkit(embedder=embedder, indexer=store, reranker=reranker)
+    # overrides 一定要转发下去：以前它是被**默默丢掉**的 ——
+    # 传了 splitter=... 却拿到默认切分器，测试还照样绿，
+    # 属于最坏的那种「夹具骗人」。
+    rag = Ragkit(embedder=embedder, indexer=store, reranker=reranker, **overrides)  # type: ignore[arg-type]
     return rag, embedder, store, reranker
 
 
@@ -273,3 +277,34 @@ async def test_context_manager_closes_owned_components(
         assert not store.closed
 
     assert store.closed
+
+
+async def test_ingest_result_records_which_splitter_was_used(tmp_path: Path) -> None:
+    """入库结果要带上「用的是哪个切分器 + 什么参数」。
+
+    ``chunk_id`` 是切分结果的内容哈希：换切分器、换 chunk_size、换 chunk_overlap，
+    整批 id 就都变了 —— 而评估集里的标注绑的正是 ``chunk_id``。
+    所以这三个值必须在入库时就记下来：事后排查「指标为什么全是 0」时，
+    「我记得我设过 350」证明不了任何事，只有记下来的这份能。
+    """
+    path = write(tmp_path, "a.md", "# 标题\n\n" + "正文内容。" * 100)
+    rag, _, _, _ = build(splitter=MarkdownSectionSplitter(chunk_size=400, chunk_overlap=0))
+
+    result = await rag.ingest([path])
+
+    assert result.splitter == "section"
+    assert result.chunk_size == 400
+    assert result.chunk_overlap == 0
+
+
+async def test_ingest_result_records_the_default_splitter_too(tmp_path: Path) -> None:
+    """没注入切分器时记的是默认那个 —— 空批次这条早退路径也不能漏。"""
+    path = write(tmp_path, "a.md", "内容。")
+    rag, _, _, _ = build()
+
+    empty = await rag.ingest([])
+    assert empty.splitter == "recursive"
+    assert empty.chunk_size > 0
+
+    result = await rag.ingest([path])
+    assert result.splitter == "recursive"

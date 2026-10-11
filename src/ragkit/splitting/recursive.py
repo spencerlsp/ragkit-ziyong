@@ -88,6 +88,12 @@ def _apply_overlap(chunks: Sequence[str], overlap: int) -> list[str]:
 class RecursiveSplitter:
     """按分隔符优先级递归切分的切分器（本项目默认用它）。"""
 
+    # 给「这个切分器叫什么」一个稳定的短名。它会被写进入库结果
+    # （见 pipeline._describe_splitter），用在「评估对不上」的排查里 ——
+    # 换切分器就会换掉全部 chunk_id，事后必须能查出来当初用的是哪个。
+    # 用短名而不是类名，是为了和 CLI 的 --splitter 取值保持一致。
+    name = "recursive"
+
     def __init__(
         self,
         chunk_size: int,
